@@ -3,6 +3,14 @@ name: build and package
 
 on:
   workflow_dispatch:
+    inputs:
+      build-type:
+        description: 'CMake-Build-Typ bei manuellem Start'
+        type: choice
+        options:
+          - Release
+          - Debug
+        default: Release
   push:
     branches: [ "master", "develop" ]
   pull_request:
@@ -28,6 +36,9 @@ jobs:
     # Set global variables and variables based on the branch name
     - name: Compute env
       id: compute-env
+      env:
+        # nur bei workflow_dispatch gesetzt, sonst leer
+        MANUAL_BUILD_TYPE: ${{ inputs.build-type }}
       run: |
         VERSION=$(grep -oP 'FILE_VERSION\s+\K\d+(,\s+\d+){2}' src/Res/resource.h | sed -E 's/[, ]+/./g')
 
@@ -36,23 +47,29 @@ jobs:
 
         if [ "${{ github.ref }}" == "refs/heads/master" ]; then
             echo "Setting production environment variables..."
-            echo "build-type=Release" >> "$GITHUB_OUTPUT"
+            BUILD_TYPE=Release
             echo "release-name=ATD Version $VERSION Release" >> "$GITHUB_OUTPUT"
             echo "artifact-name=AT-$VERSION" >> "$GITHUB_OUTPUT"
             echo "release-tag=v$VERSION" >> "$GITHUB_OUTPUT"
         elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
             echo "Setting development environment variables..."
-            echo "build-type=Release" >> "$GITHUB_OUTPUT"
+            BUILD_TYPE=Release
             echo "release-name=ATD Version $VERSION Pre-Release" >> "$GITHUB_OUTPUT"
             echo "artifact-name=AT-$VERSION-preview" >> "$GITHUB_OUTPUT"
             echo "release-tag=v$VERSION-preview" >> "$GITHUB_OUTPUT"
         else
             echo "Setting branch environment variables..."
-            echo "build-type=Debug" >> "$GITHUB_OUTPUT"
+            BUILD_TYPE=Debug
             echo "release-name=ATD Version $VERSION Preview" >> "$GITHUB_OUTPUT"
             echo "artifact-name=AT-$VERSION-${{ github.sha }}" >> "$GITHUB_OUTPUT"
             echo "release-tag=v$VERSION-${{ github.sha }}" >> "$GITHUB_OUTPUT"
         fi
+
+        # Manueller Start: gewaehlter Build-Typ statt des Standards fuer den Zweig
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "$MANUAL_BUILD_TYPE" ]; then
+            BUILD_TYPE="$MANUAL_BUILD_TYPE"
+        fi
+        echo "build-type=$BUILD_TYPE" >> "$GITHUB_OUTPUT"
         cat $GITHUB_OUTPUT
 
   build:
