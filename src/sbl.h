@@ -7,6 +7,7 @@
 
 #include <list>
 #include <map>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -73,6 +74,7 @@ class GfxLib {
 
     std::map<__int64, SDL_Surface *> Surfaces;
     CString Path;
+    std::string HdDir; // Ordner mit HD-Ersatzgrafiken, leer wenn keiner existiert
 };
 
 #define L_LOCMEM 0
