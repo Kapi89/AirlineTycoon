@@ -32,6 +32,16 @@ extern SLONG GetHighestSetBit(SLONG mask);
 #define CREATE_FULLSCREEN 16
 #define CREATE_INDEXED 32
 
+// Render-Faktor s (Phase 2, docs/phase2-plan.md): gezeichnet wird intern s-fach,
+// die Spiellogik bleibt in logischen Koordinaten. Wird einmal vor der ersten Bitmap gesetzt.
+void SB_SetRenderScale(SLONG scale);
+SLONG SB_GetRenderScale();
+
+// Logische Bildschirmgroesse (heute 640x480, fuer 16:9 spaeter breiter).
+// Neue Stellen fuer Puffergroessen, Present und Maus lesen diesen Wert statt fester 640/480.
+void SB_SetLogicalSize(XY size);
+XY SB_GetLogicalSize();
+
 class GfxLib {
   public:
     GfxLib(void *, SDL_Renderer *, const char *, SLONG, SLONG, SLONG *);
@@ -222,7 +232,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
   private:
     void Delete(void);
 
-    XY TargetSize{640, 480};
+    XY TargetSize{};
     XY TargetOffset{0, 0};
 
     SDL_Window *Window{};

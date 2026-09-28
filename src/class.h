@@ -2455,6 +2455,7 @@ class COptions {
   public:
     SLONG OptionFullscreen{};
     BOOL OptionKeepAspectRatio{};
+    SLONG OptionRenderScale{}; // Render-Faktor s (1 = wie bisher), wirkt beim Neustart
     SLONG OptionScreenWindowedWidth{};
     SLONG OptionScreenWindowedHeight{};
     BOOL OptionPlanes{};
