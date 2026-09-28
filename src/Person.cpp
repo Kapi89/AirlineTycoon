@@ -425,7 +425,9 @@ void CLAN::BlitLargeAt(SBBM &Offscreen, SLONG Dir, SLONG Phase, XY ScreenPos) {
                 SDL_Rect SrcRect = {0, 0, pbm->pBitmap->GetXSize(), pbm->pBitmap->GetYSize()};
                 SDL_Rect DestRect = {ScreenPos.x - Size.x, ScreenPos.y - pbm->pBitmap->GetYSize() * 2, ScreenPos.x - Size.x + pbm->pBitmap->GetXSize() * 2,
                                      ScreenPos.y};
-                SDL_Rect ClipRect = Offscreen.pBitmap->GetSurface()->clip_rect;
+                // PROTOTYP Phase 2: Clipping logisch, danach in physische Pixel des Ziels
+                const CRect LogClip = Offscreen.pBitmap->GetClipRect();
+                SDL_Rect ClipRect = {LogClip.left, LogClip.top, LogClip.Width(), LogClip.Height()};
 
                 if (DestRect.w > ClipRect.w) {
                     SrcRect.w -= (DestRect.w - ClipRect.w);
@@ -445,6 +447,10 @@ void CLAN::BlitLargeAt(SBBM &Offscreen, SLONG Dir, SLONG Phase, XY ScreenPos) {
                 }
 
                 if (DestRect.h > 0 && DestRect.w > 0) {
+                    const SLONG ss = pbm->pBitmap->GetScale();
+                    const SLONG ds = Offscreen.pBitmap->GetScale();
+                    SrcRect = {SrcRect.x * ss, SrcRect.y * ss, SrcRect.w * ss, SrcRect.h * ss};
+                    DestRect = {DestRect.x * ds, DestRect.y * ds, DestRect.w * ds, DestRect.h * ds};
                     SDL_BlitScaled(pbm->pBitmap->GetSurface(), &SrcRect, Offscreen.pBitmap->GetSurface(), &DestRect);
                 }
             }

@@ -18,6 +18,10 @@ static char THIS_FILE[] = __FILE__;
 // Blittet ein HL-Objekt an eine Stelle, bis jetzt aber ohne Clipping
 //--------------------------------------------------------------------------------------------
 void CHLObj::BlitAt(SB_CBitmapCore *pBitmap, XY Target) {
+    if (pBitmap->GetScale() != 1) {
+        BlitScaledAt(pBitmap, Target, 1);
+        return;
+    }
 #ifdef ENABLE_ASM
     static char FirstTime;
     static ULONG JumpBuffer[8]; // Für Wiederholungen
@@ -221,6 +225,10 @@ void CHLObj::BlitAt(SB_CBitmapCore *pBitmap, XY Target) {
 // Blittet und vergrößert:
 //--------------------------------------------------------------------------------------------
 void CHLObj::BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target) {
+    if (pBitmap->GetScale() != 1) {
+        BlitScaledAt(pBitmap, Target, 2);
+        return;
+    }
     SLONG cx = 0;
     SLONG cy = 0;
     SLONG count = 0;
@@ -284,6 +292,56 @@ void CHLObj::BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target) {
             count++;
         }
         bm += Key.lPitch / 2 * 2;
+    }
+}
+
+//--------------------------------------------------------------------------------------------
+// PROTOTYP Phase 2: HL-Objekt auf eine Bitmap mit Faktor s blitten, jeder logische Pixel
+// (bei f=2 jeder der vier) wird ein s*s-Block. Clipping in logischen Koordinaten.
+//--------------------------------------------------------------------------------------------
+void CHLObj::BlitScaledAt(SB_CBitmapCore *pBitmap, XY Target, SLONG f) {
+    const CRect Clip = pBitmap->GetClipRect();
+    if (Target.x >= Clip.right || Target.x + Size.x * f <= Clip.left) {
+        return;
+    }
+
+    pHLPool->Load();
+
+    SB_CBitmapKey Key(*pBitmap, true);
+    if (Key.Bitmap == nullptr) {
+        return;
+    }
+    const SLONG s = Key.Scale;
+    const SLONG pitch = Key.lPitch / 2;
+    auto *base = static_cast<UWORD *>(Key.Bitmap);
+
+    SLONG count = 0;
+    for (SLONG cy = 0; cy < HLineEntries.AnzEntries(); cy++) {
+        for (SLONG cx = HLineEntries[cy]; cx > 0; cx--, count++) {
+            CHLGene &g = HLines[count];
+            const UBYTE *source = g.Anz <= 4 ? reinterpret_cast<const UBYTE *>(&g.pPixel) : g.pPixel;
+            for (SLONG c = 0; c < g.Anz; c++) {
+                const UWORD color = pHLPool->PaletteMapper[static_cast<SLONG>(source[c])];
+                for (SLONG sy = 0; sy < f; sy++) {
+                    const SLONG ly = Target.y + cy * f + sy;
+                    if (ly < Clip.top || ly >= Clip.bottom) {
+                        continue;
+                    }
+                    for (SLONG sx = 0; sx < f; sx++) {
+                        const SLONG lx = Target.x + (g.Offset + c) * f + sx;
+                        if (lx < Clip.left || lx >= Clip.right) {
+                            continue;
+                        }
+                        UWORD *px = base + ly * s * pitch + lx * s;
+                        for (SLONG py = 0; py < s; py++, px += pitch) {
+                            for (SLONG qx = 0; qx < s; qx++) {
+                                px[qx] = color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -155,8 +155,9 @@ class SB_CBitmapCore {
     SLONG GetYSize() { return Size.y; }
     CRect GetClipRect() {
         const SDL_Rect &r = lpDDSurface->clip_rect;
-        return CRect(r.x, r.y, r.x + r.w, r.y + r.h);
+        return CRect(r.x / Scale, r.y / Scale, (r.x + r.w) / Scale, (r.y + r.h) / Scale);
     }
+    SLONG GetScale() const { return Scale; }
     SDL_Surface *GetSurface() { return lpDDSurface; }
     SDL_Surface *GetFlippedSurface();
     SDL_PixelFormat *GetPixelFormat(void) { return lpDDSurface->format; }
@@ -178,7 +179,8 @@ class SB_CBitmapCore {
     SDL_Surface *lpDDSurface{nullptr};
     SDL_Surface *flippedBufferSurface{nullptr};
     SDL_Texture *lpTexture{nullptr};
-    XY Size;
+    XY Size;            // logisch
+    SLONG Scale{1};     // PROTOTYP Phase 2: physisch = Size * Scale
 
   private:
     SLONG Id{-1};
@@ -212,6 +214,14 @@ class SB_CCursor {
     SDL_Surface *Background;
     XY Position;
 };
+
+// PROTOTYP Phase 2: Messwerte
+struct SB_ProtoStats {
+    Uint64 ProxyTicks{};
+    Uint64 PresentTicks{}; // Zeit in SDL_RenderPresent (wartet auf VSync)
+    SLONG ProxyCalls{};
+};
+extern SB_ProtoStats gProtoStats;
 
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
@@ -260,7 +270,7 @@ class SB_CBitmapMain {
 
 class SB_CBitmapKey {
   public:
-    SB_CBitmapKey(class SB_CBitmapCore &);
+    SB_CBitmapKey(class SB_CBitmapCore &, bool native = false);
     ~SB_CBitmapKey(void);
     SB_CBitmapKey(const SB_CBitmapKey &) = delete;
     SB_CBitmapKey &operator=(const SB_CBitmapKey &) = delete;
@@ -268,17 +278,23 @@ class SB_CBitmapKey {
         Surface = std::exchange(o.Surface, nullptr);
         Bitmap = std::exchange(o.Bitmap, nullptr);
         lPitch = std::exchange(o.lPitch, 0);
+        Proxy = std::exchange(o.Proxy, nullptr);
+        Scale = std::exchange(o.Scale, 1);
     }
     SB_CBitmapKey &operator=(SB_CBitmapKey &&o) {
         std::swap(Surface, o.Surface);
         std::swap(Bitmap, o.Bitmap);
         std::swap(lPitch, o.lPitch);
+        std::swap(Proxy, o.Proxy);
+        std::swap(Scale, o.Scale);
         return *this;
     }
 
     SDL_Surface *Surface;
     void *Bitmap;
     SLONG lPitch;
+    SLONG Scale{1};                 // physische Pixel je logischem Pixel (nur native Zugriffe)
+    SDL_Surface *Proxy{nullptr};    // PROTOTYP: 1x-Kopie fuer nicht umgestellten Code
 };
 
 struct CFRONTDATA {

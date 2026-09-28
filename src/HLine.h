@@ -68,6 +68,11 @@ class CHLObj {
     void BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target);
     void BlitLargeAt(SB_CBitmapCore *pBitmap, SLONG tx, SLONG ty) { BlitLargeAt(pBitmap, XY(tx, ty)); }
 
+  private:
+    void BlitScaledAt(SB_CBitmapCore *pBitmap, XY Target, SLONG f); // PROTOTYP Phase 2
+
+  public:
+
     friend TEAKFILE &operator<<(TEAKFILE &File, const CHLObj &obj) {
         File.Write((const UBYTE *)&obj.graphicID, 8);
         File << obj.Size << obj.HLines << obj.HLineEntries;

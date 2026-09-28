@@ -44,12 +44,13 @@ BOOL SBBM::ShiftUp(SLONG y) {
     // the previous method was to draw onto yourself with blit
     // tha (maybe) caused some crashes, so now we copy and then redraw
     SDL_Surface *orig = this->pBitmap->GetSurface();
-    SDL_Surface *buffer = SDL_CreateRGBSurfaceWithFormat(0, Size.x, Size.y, orig->format->BitsPerPixel, orig->format->format);
+    const SLONG s = this->pBitmap->GetScale();
+    SDL_Surface *buffer = SDL_CreateRGBSurfaceWithFormat(0, orig->w, orig->h, orig->format->BitsPerPixel, orig->format->format);
 
     SDL_BlitSurface(orig, nullptr, buffer, nullptr); // copy content from original to buffer
 
-    SDL_Rect src = {0, 0, Size.x, Size.y};
-    SDL_Rect dst = {0, -y, Size.x, Size.y};
+    SDL_Rect src = {0, 0, orig->w, orig->h};
+    SDL_Rect dst = {0, -y * s, orig->w, orig->h};
     SDL_BlitSurface(buffer, &src, orig, &dst); // redraw content to original
 
     SDL_FreeSurface(buffer); // just a buffer, throw out
@@ -356,10 +357,18 @@ BOOL SBPRIMARYBM::FlipBlitFromT(SBBM &TecBitmap, XY Target) {
       DDBltFx.dwSize = sizeof (DDBltFx);
       DDBltFx.dwDDFX = DDBLTFX_MIRRORLEFTRIGHT;*/
 
-    SDL_Rect destRect = {pt.x, pt.y, srcRect.w, srcRect.h};
+    const SLONG srcScale = TecBitmap.pBitmap->GetScale();
+    const SLONG dstScale = PrimaryBm.GetScale();
+    SDL_Rect destRect = {pt.x * dstScale, pt.y * dstScale, srcRect.w * dstScale, srcRect.h * dstScale};
+    srcRect.w *= srcScale;
+    srcRect.h *= srcScale;
 
     // TODO(merten): Mirror the blit
-    SDL_BlitSurface(TecBitmap.pBitmap->GetFlippedSurface(), &srcRect, PrimaryBm.GetSurface(), &destRect);
+    if (srcScale == dstScale) {
+        SDL_BlitSurface(TecBitmap.pBitmap->GetFlippedSurface(), &srcRect, PrimaryBm.GetSurface(), &destRect);
+    } else {
+        SDL_BlitScaled(TecBitmap.pBitmap->GetFlippedSurface(), &srcRect, PrimaryBm.GetSurface(), &destRect);
+    }
     // Clippen
     /*if (PrimaryBm.FastClip(PrimaryBm.GetClipRect(), &pt, &srcRect))
       DD_ERROR (PrimaryBm.GetSurface()->Blt (&destRect, TecBitmap.pBitmap->GetSurface(), &srcRect, DDBLT_DDFX | DDBLT_KEYSRC | DDBLT_WAIT, &DDBltFx));
@@ -484,6 +493,29 @@ BOOL SBPRIMARYBM::BlitFromT(SBBM & /*TecBitmap*/, XY /*p1*/, XY /*p2*/) { return
 BOOL SBPRIMARYBM::BlitFromT(SBBM & /*TecBitmap*/, SLONG /*tx*/, SLONG /*ty*/, SLONG /*tx2*/, SLONG /*ty2*/) { return 0; }
 
 void SBPRIMARYBM::Flip(XY /*WindowPos*/, BOOL /*ShowFPS*/) {
+    // PROTOTYP Phase 2: fps und Kosten der 1x-Kopien alle ~2 s ins Log
+    {
+        static Uint64 lastLog = 0;
+        static SLONG frames = 0;
+        const Uint64 now = SDL_GetPerformanceCounter();
+        const Uint64 freq = SDL_GetPerformanceFrequency();
+        if (lastLog == 0) {
+            lastLog = now;
+        }
+        frames++;
+        if (now - lastLog >= 2 * freq) {
+            const double secs = double(now - lastLog) / double(freq);
+            const double frameMs = 1000.0 * secs / frames;
+            const double presentMs = 1000.0 * double(gProtoStats.PresentTicks) / double(freq) / frames;
+            AT_Log_I("Proto", "s=%d fps=%.1f frame=%.1f ms arbeit=%.1f ms (ohne VSync-Warten) kompat=%.1f ms (%.1f Aufrufe) Raum=%ld",
+                     PrimaryBm.GetScale(), frames / secs, frameMs, frameMs - presentMs,
+                     1000.0 * double(gProtoStats.ProxyTicks) / double(freq) / frames, double(gProtoStats.ProxyCalls) / frames,
+                     static_cast<long>(Sim.Players.Players[Sim.localPlayer].GetRoom()));
+            lastLog = now;
+            frames = 0;
+            gProtoStats = SB_ProtoStats{};
+        }
+    }
     if (gFramesToDrawBeforeFirstBlend == 0 && gBlendState != -1 && (Sim.Options.OptionBlenden != 0) && (bLeaveGameLoop == 0)) {
         if (gBlendState == -2) {
             gBlendState = 8;

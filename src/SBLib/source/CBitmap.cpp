@@ -26,6 +26,19 @@ SLONG SB_GetRenderScale() { return gRenderScale; }
 
 void SB_SetLogicalSize(XY size) { gLogicalSize = size; }
 
+// PROTOTYP Phase 2 -------------------------------------------------------------------------
+SB_ProtoStats gProtoStats;
+
+static SDL_Rect PhysRect(SLONG x, SLONG y, SLONG w, SLONG h, SLONG s) { return SDL_Rect{x * s, y * s, w * s, h * s}; }
+
+// Blit mit Vergroesserung/Verkleinerung, falls die Faktoren verschieden sind
+static int ScaleBlit(SDL_Surface *src, const SDL_Rect *srcRect, SLONG srcScale, SDL_Surface *dst, SDL_Rect *dstRect, SLONG dstScale) {
+    if (srcScale == dstScale) {
+        return SDL_BlitSurface(src, srcRect, dst, dstRect);
+    }
+    return SDL_BlitScaled(src, srcRect, dst, dstRect);
+}
+
 XY SB_GetLogicalSize() { return gLogicalSize; }
 
 Uint16 get_pixel16(SDL_Surface *surface, SLONG x, SLONG y);
@@ -87,6 +100,8 @@ ULONG SB_CBitmapMain::CreateBitmap(SB_CBitmapCore **out, SLONG w, SLONG h, ULONG
     core->lpDD = Renderer;
 
     int depth, format;
+    const SLONG scale = (flags & (CREATE_INDEXED | CREATE_USEALPHA)) != 0U ? 1 : SB_GetRenderScale();
+    core->Scale = scale;
     if ((flags & CREATE_INDEXED) != 0U) {
         depth = 8;
         format = SDL_PIXELFORMAT_INDEX8;
@@ -98,14 +113,14 @@ ULONG SB_CBitmapMain::CreateBitmap(SB_CBitmapCore **out, SLONG w, SLONG h, ULONG
         format = SDL_PIXELFORMAT_RGB565;
     }
 
-    core->lpDDSurface = SDL_CreateRGBSurfaceWithFormat(0, w, h, depth, format);
+    core->lpDDSurface = SDL_CreateRGBSurfaceWithFormat(0, w * scale, h * scale, depth, format);
 
     if ((flags & CREATE_USECOLORKEY) != 0U) {
         core->SetColorKey(0);
     }
 
     if (Renderer != nullptr && (flags & CREATE_VIDMEM) != 0U) {
-        core->lpTexture = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w, h);
+        core->lpTexture = SDL_CreateTexture(Renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w * scale, h * scale);
 
         if ((flags & (CREATE_USEALPHA | CREATE_USECOLORKEY)) != 0U) {
             SDL_SetTextureBlendMode(core->lpTexture, SDL_BLENDMODE_BLEND);
@@ -152,7 +167,7 @@ ULONG SB_CBitmapCore::Line(SLONG x1, SLONG y1, SLONG x2, SLONG y2, SB_Hardwareco
             SDL_GetColorKey(lpDDSurface, &key);
             SDL_SetRenderDrawColor(lpDD, (color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF,
                                    color == key ? SDL_ALPHA_TRANSPARENT : SDL_ALPHA_OPAQUE);
-            SDL_RenderDrawLine(lpDD, x1, y1, x2, y2);
+            SDL_RenderDrawLine(lpDD, x1 * Scale, y1 * Scale, x2 * Scale, y2 * Scale);
             return 0;
         }
     }
@@ -229,7 +244,7 @@ ULONG SB_CBitmapCore::Line(SLONG x1, SLONG y1, SLONG x2, SLONG y2, SB_Hardwareco
 }
 
 void SB_CBitmapCore::SetClipRect(const CRect &rect) {
-    SDL_Rect clip = {rect.left, rect.top, rect.Width(), rect.Height()};
+    SDL_Rect clip = PhysRect(rect.left, rect.top, rect.Width(), rect.Height(), Scale);
     SDL_SetClipRect(lpDDSurface, &clip);
 }
 
@@ -280,7 +295,7 @@ ULONG SB_CBitmapCore::Clear(SB_Hardwarecolor hwcolor, const RECT *pRect) {
 
     if (pRect != nullptr) {
         const CRect &rect = *(const CRect *)pRect;
-        SDL_Rect dst = {rect.left, rect.top, rect.Width(), rect.Height()};
+        SDL_Rect dst = PhysRect(rect.left, rect.top, rect.Width(), rect.Height(), Scale);
         if (lpTexture != nullptr) {
             SDL_RenderFillRect(lpDD, &dst);
         }
@@ -307,6 +322,10 @@ ULONG SB_CBitmapCore::Clear(SB_Hardwarecolor hwcolor, const RECT *pRect) {
 }
 
 ULONG SB_CBitmapCore::SetPixel(SLONG x, SLONG y, SB_Hardwarecolor hwcolor) {
+    if (Scale != 1) {
+        SDL_Rect r = PhysRect(x, y, 1, 1, Scale);
+        return SDL_FillRect(lpDDSurface, &r, (word)hwcolor);
+    }
     if (SDL_MUSTLOCK(lpDDSurface) && SDL_LockSurface(lpDDSurface) < 0) {
         return 1;
     }
@@ -333,6 +352,8 @@ ULONG SB_CBitmapCore::GetPixel(SLONG x, SLONG y) {
     }
     Uint8 bpp = lpDDSurface->format->BytesPerPixel;
     Uint8 bits = lpDDSurface->format->BitsPerPixel;
+    x *= Scale;
+    y *= Scale;
     Uint8 *p = static_cast<Uint8 *>(lpDDSurface->pixels) + y * lpDDSurface->pitch + x * bpp;
     dword result = *reinterpret_cast<Uint32 *>(p);
     if (SDL_MUSTLOCK(lpDDSurface)) {
@@ -398,8 +419,8 @@ ULONG SB_CBitmapCore::Blit(class SB_CBitmapCore *core, SLONG x, SLONG y) {
         return 0;
     }
 
-    SDL_Rect dst = {x, y, Size.x, Size.y};
-    return SDL_BlitSurface(lpDDSurface, nullptr, core->lpDDSurface, &dst);
+    SDL_Rect dst = PhysRect(x, y, Size.x, Size.y, core->Scale);
+    return ScaleBlit(lpDDSurface, nullptr, Scale, core->lpDDSurface, &dst, core->Scale);
 }
 
 ULONG SB_CBitmapCore::Blit(class SB_CBitmapCore *core, SLONG x, SLONG y, const CRect &rect) {
@@ -407,9 +428,9 @@ ULONG SB_CBitmapCore::Blit(class SB_CBitmapCore *core, SLONG x, SLONG y, const C
         return 0;
     }
 
-    SDL_Rect src = {rect.left, rect.top, rect.Width(), rect.Height()};
-    SDL_Rect dst = {x, y, rect.Width(), rect.Height()};
-    return SDL_BlitSurface(lpDDSurface, &src, core->lpDDSurface, &dst);
+    SDL_Rect src = PhysRect(rect.left, rect.top, rect.Width(), rect.Height(), Scale);
+    SDL_Rect dst = PhysRect(x, y, rect.Width(), rect.Height(), core->Scale);
+    return ScaleBlit(lpDDSurface, &src, Scale, core->lpDDSurface, &dst, core->Scale);
 }
 
 ULONG SB_CBitmapCore::BlitFast(class SB_CBitmapCore *core, SLONG x, SLONG y) {
@@ -424,8 +445,8 @@ ULONG SB_CBitmapCore::BlitFast(class SB_CBitmapCore *core, SLONG x, SLONG y) {
         SDL_SetColorKey(lpDDSurface, SDL_FALSE, key);
     }
 
-    SDL_Rect dst = {x, y, Size.x, Size.y};
-    SDL_BlitSurface(lpDDSurface, nullptr, core->lpDDSurface, &dst);
+    SDL_Rect dst = PhysRect(x, y, Size.x, Size.y, core->Scale);
+    ScaleBlit(lpDDSurface, nullptr, Scale, core->lpDDSurface, &dst, core->Scale);
 
     // Restore color key
     if (result != -1) {
@@ -446,9 +467,9 @@ ULONG SB_CBitmapCore::BlitFast(class SB_CBitmapCore *core, SLONG x, SLONG y, con
         SDL_SetColorKey(lpDDSurface, SDL_FALSE, key);
     }
 
-    SDL_Rect src = {rect.left, rect.top, rect.Width(), rect.Height()};
-    SDL_Rect dst = {x, y, rect.Width(), rect.Height()};
-    SDL_BlitSurface(lpDDSurface, &src, core->lpDDSurface, &dst);
+    SDL_Rect src = PhysRect(rect.left, rect.top, rect.Width(), rect.Height(), Scale);
+    SDL_Rect dst = PhysRect(x, y, rect.Width(), rect.Height(), core->Scale);
+    ScaleBlit(lpDDSurface, &src, Scale, core->lpDDSurface, &dst, core->Scale);
 
     // Restore color key
     if (result != -1) {
@@ -458,8 +479,8 @@ ULONG SB_CBitmapCore::BlitFast(class SB_CBitmapCore *core, SLONG x, SLONG y, con
 }
 
 ULONG SB_CBitmapCore::BlitChar(SDL_Surface *font, SLONG x, SLONG y, const SDL_Rect &rect) {
-    SDL_Rect dst = {x, y, rect.w, rect.h};
-    return SDL_BlitSurface(font, &rect, lpDDSurface, &dst);
+    SDL_Rect dst = PhysRect(x, y, rect.w, rect.h, Scale);
+    return ScaleBlit(font, &rect, 1, lpDDSurface, &dst, Scale);
 }
 
 void SB_CBitmapCore::InitClipRect() { SDL_SetClipRect(lpDDSurface, nullptr); }
@@ -559,7 +580,9 @@ SLONG SB_CPrimaryBitmap::Present() {
             Cursor->Render(lpDD);
         }
 
+        const Uint64 presentStart = SDL_GetPerformanceCounter();
         SDL_RenderPresent(lpDD);
+        gProtoStats.PresentTicks += SDL_GetPerformanceCounter() - presentStart;
     } else {
         if (SDL_UpdateWindowSurface(Window) < 0) {
             return -3;
@@ -579,11 +602,12 @@ SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned sh
     SDL_ClearError();
 
     Window = Wnd;
+    Scale = SB_GetRenderScale();
     lpDD = SDL_CreateRenderer(Window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
 
     if (lpDD != nullptr) {
         AT_Log("Using hardware accelerated presentation");
-        lpTexture = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, w, h);
+        lpTexture = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, w * Scale, h * Scale);
 
         if (SDL_LockTextureToSurface(lpTexture, nullptr, &lpDDSurface) < 0) {
             AT_Log("Unable to lock backbuffer to surface");
@@ -595,7 +619,7 @@ SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned sh
         SDL_ClearError();
 
         lpTexture = nullptr;
-        lpDDSurface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 16, SDL_PIXELFORMAT_RGB565);
+        lpDDSurface = SDL_CreateRGBSurfaceWithFormat(0, w * Scale, h * Scale, 16, SDL_PIXELFORMAT_RGB565);
     }
 
     Size.x = w;
@@ -626,8 +650,10 @@ ULONG SB_CPrimaryBitmap::Release() {
     return 0;
 }
 
-SB_CBitmapKey::SB_CBitmapKey(class SB_CBitmapCore &core) : Surface(core.lpDDSurface) {
+SB_CBitmapKey::SB_CBitmapKey(class SB_CBitmapCore &core, bool native) : Surface(core.lpDDSurface) {
     if (Surface == nullptr) {
+        Bitmap = nullptr;
+        lPitch = 0;
         return;
     }
     if (SDL_MUSTLOCK(Surface)) {
@@ -635,11 +661,49 @@ SB_CBitmapKey::SB_CBitmapKey(class SB_CBitmapCore &core) : Surface(core.lpDDSurf
     }
     Bitmap = Surface->pixels;
     lPitch = Surface->pitch;
+    Scale = core.Scale;
+    if (native || core.Scale == 1) {
+        return;
+    }
+
+    // PROTOTYP: nicht umgestellter Code bekommt eine 1x-Kopie (jeder s-te Pixel)
+    const Uint64 start = SDL_GetPerformanceCounter();
+    const SLONG s = core.Scale;
+    const SLONG bpp = Surface->format->BytesPerPixel;
+    Proxy = SDL_CreateRGBSurfaceWithFormat(0, core.Size.x, core.Size.y, Surface->format->BitsPerPixel, Surface->format->format);
+    for (SLONG y = 0; y < Proxy->h; y++) {
+        const auto *src = static_cast<const Uint8 *>(Surface->pixels) + y * s * Surface->pitch;
+        auto *dst = static_cast<Uint8 *>(Proxy->pixels) + y * Proxy->pitch;
+        for (SLONG x = 0; x < Proxy->w; x++) {
+            memcpy(dst + x * bpp, src + x * s * bpp, bpp);
+        }
+    }
+    Bitmap = Proxy->pixels;
+    lPitch = Proxy->pitch;
+    Scale = 1;
+    gProtoStats.ProxyTicks += SDL_GetPerformanceCounter() - start;
+    gProtoStats.ProxyCalls++;
 }
 
 SB_CBitmapKey::~SB_CBitmapKey() {
     if (Surface == nullptr) {
         return;
+    }
+    if (Proxy != nullptr) {
+        // PROTOTYP: 1x-Kopie per Nearest-Neighbor zurueckschreiben
+        const Uint64 start = SDL_GetPerformanceCounter();
+        const SLONG s = Surface->w / Proxy->w;
+        const SLONG bpp = Surface->format->BytesPerPixel;
+        for (SLONG y = 0; y < Proxy->h * s; y++) {
+            const auto *src = static_cast<const Uint8 *>(Proxy->pixels) + (y / s) * Proxy->pitch;
+            auto *dst = static_cast<Uint8 *>(Surface->pixels) + y * Surface->pitch;
+            for (SLONG x = 0; x < Proxy->w * s; x++) {
+                memcpy(dst + x * bpp, src + (x / s) * bpp, bpp);
+            }
+        }
+        SDL_FreeSurface(Proxy);
+        Proxy = nullptr;
+        gProtoStats.ProxyTicks += SDL_GetPerformanceCounter() - start;
     }
     if (SDL_MUSTLOCK(Surface)) {
         SDL_UnlockSurface(Surface);
