@@ -1,0 +1,11 @@
+# Bereits im Original-Repository (mertenpopp) enthaltene Dateien, die der
+# Asset-Guard sonst melden wuerde. Nur mit Begruendung erweitern.
+bot_standalone/city.csv
+bot_standalone/planetyp.csv
+bot_standalone/pnames.csv
+libs/CrashRpt/install/bin/crashpad_handler.exe
+libs/CrashRpt/install/bin/crashpad_handler.pdb
+libs/CrashRpt/install/bin/sentry.dll
+libs/CrashRpt/install/bin/sentry.pdb
+libs/CrashRpt/install/lib/sentry.lib
+gamefiles/README.md
