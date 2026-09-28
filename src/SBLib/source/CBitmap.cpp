@@ -8,6 +8,26 @@
 
 #define AT_Log(...) AT_Log_I("Rendering", __VA_ARGS__)
 
+static_assert(sizeof(void *) == 8, "Airline Tycoon muss als 64-Bit-Programm gebaut werden");
+
+static SLONG gRenderScale = 1;
+static XY gLogicalSize{640, 480};
+
+void SB_SetRenderScale(SLONG scale) {
+    if (scale < 1 || scale > 4) {
+        AT_Log("Render-Faktor %d ungueltig, verwende 1", scale);
+        scale = 1;
+    }
+    gRenderScale = scale;
+    AT_Log("Render-Faktor s=%d", gRenderScale);
+}
+
+SLONG SB_GetRenderScale() { return gRenderScale; }
+
+void SB_SetLogicalSize(XY size) { gLogicalSize = size; }
+
+XY SB_GetLogicalSize() { return gLogicalSize; }
+
 Uint16 get_pixel16(SDL_Surface *surface, SLONG x, SLONG y);
 
 void put_pixel16(SDL_Surface *surface, SLONG x, SLONG y, Uint16 pixel);
@@ -580,6 +600,7 @@ SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned sh
 
     Size.x = w;
     Size.y = h;
+    TargetSize = XY(w, h);
     Cursor = nullptr;
     InitClipRect();
     *out = lpDD;

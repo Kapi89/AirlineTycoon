@@ -205,7 +205,10 @@ void GameFrame::UpdateWindow() const {
     UpdateFrameSize();
 }
 
-constexpr SLONG getAspectWidth(SLONG height) { return static_cast<SLONG>(static_cast<float>(height) * (640.0f / 480.0f)); }
+static SLONG getAspectWidth(SLONG height) {
+    const XY logical = SB_GetLogicalSize();
+    return static_cast<SLONG>(static_cast<float>(height) * (static_cast<float>(logical.x) / static_cast<float>(logical.y)));
+}
 
 void GameFrame::UpdateFrameSize() const {
     SLONG screenW = 0, screenH = 0;
@@ -239,10 +242,11 @@ void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
         screenW = aspectWidth;
     }
 
+    const XY logical = SB_GetLogicalSize();
     x /= static_cast<FLOAT>(screenW);
-    x *= 640;
+    x *= static_cast<FLOAT>(logical.x);
     y /= static_cast<FLOAT>(screenH);
-    y *= 480;
+    y *= static_cast<FLOAT>(logical.y);
 
     p->x = static_cast<SLONG>(x);
     p->y = static_cast<SLONG>(y);
@@ -261,9 +265,10 @@ void GameFrame::TranslatePointToScreenSpace(SLONG &x, SLONG &y) const {
 
     FLOAT _x = static_cast<FLOAT>(x);
     FLOAT _y = static_cast<FLOAT>(y);
-    _x /= 640;
+    const XY logical = SB_GetLogicalSize();
+    _x /= static_cast<FLOAT>(logical.x);
     _x *= static_cast<FLOAT>(screenW);
-    _y /= 480;
+    _y /= static_cast<FLOAT>(logical.y);
     _y *= static_cast<FLOAT>(screenH);
 
     if (Sim.Options.OptionKeepAspectRatio == 1) {
@@ -327,8 +332,9 @@ GameFrame::GameFrame() {
 
     pGfxMain = new GfxMain(lpDD);
 
-    PrimaryBm.ReSize(h, bFullscreen, XY(640, 480));
-    PrimaryBm.ReSizePartB(h, bFullscreen, XY(640, 480));
+    SB_SetRenderScale(Sim.Options.OptionRenderScale);
+    PrimaryBm.ReSize(h, bFullscreen, SB_GetLogicalSize());
+    PrimaryBm.ReSizePartB(h, bFullscreen, SB_GetLogicalSize());
     pCursor = new SB_CCursor(&PrimaryBm.PrimaryBm);
     PrimaryBm.PrimaryBm.AssignCursor(pCursor);
 
