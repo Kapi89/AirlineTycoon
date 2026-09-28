@@ -14,7 +14,8 @@ Dateiformat (siehe src/SBLib/source/GfxLib.cpp):
   "GLIB", Kopf (Laenge als dword, darin Anzahl Eintraege und Position des Verzeichnisses)
   Verzeichnis: je Eintrag dword Groesse, byte Typ; Typ 1 = Grafik mit
                char[8] Name und dword Offset
-  Grafik am Offset: 76 Byte Bildkopf, danach Size Byte Pixel (meist RGB565)
+  Grafik am Offset: 76 Byte Bildkopf, danach Size Byte Pixel (meist RGB565,
+               einige Chunks 24 Bit, z. B. ZEIGER01-04 in buero_b.gli)
 Keine Abhaengigkeiten ausser der Python-Standardbibliothek.
 """
 import argparse
@@ -73,11 +74,11 @@ def _channel_table(mask):
 
 
 _TABLES = {}
+# 24/32-Bit-Chunks ohne Masken: SDL nimmt dann BGR-Bytefolge an (= R in 0xFF0000)
+DEFAULT_MASKS = (0xFF0000, 0x00FF00, 0x0000FF)
 
 
-def to_rgb(width, height, bpp, masks, pitch, pixels):
-    if bpp != 16:
-        raise ValueError(f"{bpp} Bit pro Pixel wird nicht unterstuetzt")
+def _to_rgb16(width, height, masks, pitch, pixels):
     if masks not in _TABLES:
         r, g, b = (_channel_table(m) for m in masks)
         _TABLES[masks] = bytes(c for v in range(65536) for c in (r[v], g[v], b[v]))
@@ -88,6 +89,38 @@ def to_rgb(width, height, bpp, masks, pitch, pixels):
         values = struct.unpack(f"<{width}H", line)
         rows.append(b"".join(table[v * 3:v * 3 + 3] for v in values))
     return rows
+
+
+def _channel(value, mask):
+    if mask == 0:
+        return 0
+    shift = (mask & -mask).bit_length() - 1
+    bits = bin(mask).count("1")
+    v = (value & mask) >> shift
+    return v >> (bits - 8) if bits >= 8 else v * 255 // ((1 << bits) - 1)
+
+
+def _to_rgb_wide(width, height, bpp, masks, pitch, pixels):
+    step = bpp // 8
+    if not any(masks):
+        masks = DEFAULT_MASKS
+    rows = []
+    for y in range(height):
+        line = pixels[y * pitch:y * pitch + width * step]
+        out = bytearray()
+        for x in range(0, width * step, step):
+            v = int.from_bytes(line[x:x + step], "little")
+            out += bytes((_channel(v, masks[0]), _channel(v, masks[1]), _channel(v, masks[2])))
+        rows.append(bytes(out))
+    return rows
+
+
+def to_rgb(width, height, bpp, masks, pitch, pixels):
+    if bpp == 16:
+        return _to_rgb16(width, height, masks, pitch, pixels)
+    if bpp in (24, 32):
+        return _to_rgb_wide(width, height, bpp, masks, pitch, pixels)
+    raise ValueError(f"{bpp} Bit pro Pixel wird nicht unterstuetzt")
 
 
 def write_png(path, width, height, rows):
@@ -119,15 +152,23 @@ def find_archives(sources, target):
 def export(path, target, overwrite=False):
     folder = os.path.basename(os.path.dirname(os.path.abspath(path))).lower()
     outdir = os.path.join(target, folder, os.path.basename(path).lower())
-    count = 0
+    count = skipped = 0
     for raw_name, width, height, bpp, masks, pitch, pixels in read_gli(path):
-        out = os.path.join(outdir, chunk_filename(raw_name) + ".png")
+        name = chunk_filename(raw_name)
+        out = os.path.join(outdir, name + ".png")
         if not overwrite and os.path.exists(out):
             continue
+        try:
+            rows = to_rgb(width, height, bpp, masks, pitch, pixels)
+        except ValueError as exc:
+            # Ein ungewoehnlicher Chunk soll nicht den Rest der Datei verhindern
+            print(f"{path}: Chunk {name} uebersprungen ({exc})", file=sys.stderr)
+            skipped += 1
+            continue
         os.makedirs(outdir, exist_ok=True)
-        write_png(out, width, height, to_rgb(width, height, bpp, masks, pitch, pixels))
+        write_png(out, width, height, rows)
         count += 1
-    return count
+    return count, skipped
 
 
 def main():
@@ -137,16 +178,17 @@ def main():
     ap.add_argument("-f", "--force", action="store_true", help="vorhandene PNG ueberschreiben")
     args = ap.parse_args()
 
-    total = errors = 0
+    total = errors = skipped = 0
     for path in find_archives(args.sources, args.output):
         try:
-            n = export(path, args.output, args.force)
+            n, s = export(path, args.output, args.force)
             total += n
-            print(f"{path}: {n} Bilder")
+            skipped += s
+            print(f"{path}: {n} Bilder" + (f", {s} uebersprungen" if s else ""))
         except (ValueError, struct.error) as exc:
             errors += 1
             print(f"{path}: FEHLER {exc}", file=sys.stderr)
-    print(f"{total} Bilder exportiert, {errors} Fehler.")
+    print(f"{total} Bilder exportiert, {skipped} Chunks uebersprungen, {errors} Dateien mit Fehler.")
     return 1 if errors else 0
 
 
