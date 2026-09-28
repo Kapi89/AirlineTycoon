@@ -123,8 +123,8 @@ static void LoadHdPixels(const std::string &dir, const char (&name)[8], const Gf
     if (!fs::is_regular_file(file, ec)) {
         return;
     }
-    if (image.BitDepth != 16 || image.Height == 0) {
-        AT_Log("HD: %s ignoriert, nur 16-Bit-Bilder werden ersetzt", file.string().c_str());
+    if ((image.BitDepth != 16 && image.BitDepth != 24 && image.BitDepth != 32) || image.Height == 0) {
+        AT_Log("HD: %s ignoriert, %u Bit pro Pixel werden nicht unterstuetzt", file.string().c_str(), image.BitDepth);
         return;
     }
 
@@ -144,14 +144,23 @@ static void LoadHdPixels(const std::string &dir, const char (&name)[8], const Gf
         return;
     }
 
+    // 24/32-Bit-Chunks ohne Masken: SDL nimmt dann R in 0xFF0000 an (wie tools/gli_export.py)
+    const bool noMasks = image.Rmask == 0 && image.Gmask == 0 && image.Bmask == 0;
+    const dword rmask = noMasks ? 0xFF0000 : image.Rmask;
+    const dword gmask = noMasks ? 0x00FF00 : image.Gmask;
+    const dword bmask = noMasks ? 0x0000FF : image.Bmask;
+    const dword bytesPerPixel = image.BitDepth / 8;
     const dword pitch = image.Size / image.Height;
     SDL_LockSurface(argb);
     for (dword y = 0; y < image.Height; y++) {
         const auto *src = reinterpret_cast<const Uint32 *>(static_cast<const Uint8 *>(argb->pixels) + y * argb->pitch);
-        auto *dst = reinterpret_cast<word *>(pixels + y * pitch);
+        auto *dst = reinterpret_cast<Uint8 *>(pixels + y * pitch);
         for (dword x = 0; x < image.Width; x++) {
             const Uint32 p = src[x];
-            dst[x] = static_cast<word>(PackChannel(Uint8(p >> 16), image.Rmask) | PackChannel(Uint8(p >> 8), image.Gmask) | PackChannel(Uint8(p), image.Bmask));
+            const dword v = PackChannel(Uint8(p >> 16), rmask) | PackChannel(Uint8(p >> 8), gmask) | PackChannel(Uint8(p), bmask);
+            for (dword b = 0; b < bytesPerPixel; b++) {
+                dst[x * bytesPerPixel + b] = Uint8(v >> (8 * b)); // little endian wie in der GLI-Datei
+            }
         }
     }
     SDL_UnlockSurface(argb);

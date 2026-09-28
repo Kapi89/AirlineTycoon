@@ -35,7 +35,7 @@ Beim Laden einer `.gli`/`.glj`-Datei sucht die Engine `hd/<ordner>/<datei>/` im 
 Gibt es dort eine PNG zum Chunk, wird sie statt des Originalbildes geladen. Einschraenkungen vorerst:
 
 - Das PNG muss **genau die Originalgroesse** haben, sonst wird es ignoriert (Meldung im Log).
-- Nur 16-Bit-Bilder; die Farben werden auf RGB565 reduziert. Ein Alphakanal wird ignoriert,
-  transparente Stellen muessen die Farbe des Originals behalten (Colorkey).
+- 16-, 24- und 32-Bit-Bilder; die Farben werden auf das Format des Originals reduziert (meist RGB565).
+  Ein Alphakanal wird ignoriert; transparente Stellen muessen die Farbe des Originals behalten (Colorkey).
 
 Ohne `hd/`-Ordner verhaelt sich das Spiel unveraendert.
