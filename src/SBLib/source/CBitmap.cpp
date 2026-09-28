@@ -31,10 +31,59 @@ SB_ProtoStats gProtoStats;
 
 static SDL_Rect PhysRect(SLONG x, SLONG y, SLONG w, SLONG h, SLONG s) { return SDL_Rect{x * s, y * s, w * s, h * s}; }
 
+// SDL_BlitScaled kann 8-Bit-Quellen mit Palette und Colorkey nicht ("Blit combination not
+// supported"), z. B. Smacker-Frames. Deshalb den benoetigten Ausschnitt selbst nach RGB565
+// wandeln: Schluessel-Index -> 0 (Colorkey), echtes Schwarz -> 0x0001, damit es deckend bleibt.
+static SDL_Surface *IndexedToRgb565(SDL_Surface *src, const SDL_Rect &r) {
+    SDL_Surface *tmp = SDL_CreateRGBSurfaceWithFormat(0, r.w, r.h, 16, SDL_PIXELFORMAT_RGB565);
+    if (tmp == nullptr) {
+        return nullptr;
+    }
+    Uint32 key = 0;
+    const bool hasKey = SDL_GetColorKey(src, &key) == 0;
+    Uint16 map[256];
+    const SDL_Palette *pal = src->format->palette;
+    for (int i = 0; i < 256; i++) {
+        Uint16 v = 0;
+        if (pal != nullptr && i < pal->ncolors) {
+            const SDL_Color &c = pal->colors[i];
+            v = Uint16(((c.r >> 3) << 11) | ((c.g >> 2) << 5) | (c.b >> 3));
+        }
+        map[i] = (hasKey && Uint32(i) == key) ? 0 : (v == 0 && hasKey ? 1 : v);
+    }
+    SDL_LockSurface(src);
+    for (int y = 0; y < r.h; y++) {
+        const auto *s = static_cast<const Uint8 *>(src->pixels) + (r.y + y) * src->pitch + r.x;
+        auto *d = reinterpret_cast<Uint16 *>(static_cast<Uint8 *>(tmp->pixels) + y * tmp->pitch);
+        for (int x = 0; x < r.w; x++) {
+            d[x] = map[s[x]];
+        }
+    }
+    SDL_UnlockSurface(src);
+    if (hasKey) {
+        SDL_SetColorKey(tmp, SDL_TRUE, 0);
+    }
+    return tmp;
+}
+
 // Blit mit Vergroesserung/Verkleinerung, falls die Faktoren verschieden sind
 static int ScaleBlit(SDL_Surface *src, const SDL_Rect *srcRect, SLONG srcScale, SDL_Surface *dst, SDL_Rect *dstRect, SLONG dstScale) {
     if (srcScale == dstScale) {
         return SDL_BlitSurface(src, srcRect, dst, dstRect);
+    }
+    if (SDL_ISPIXELFORMAT_INDEXED(src->format->format)) {
+        SDL_Rect r = srcRect != nullptr ? *srcRect : SDL_Rect{0, 0, src->w, src->h};
+        SDL_Rect full{0, 0, src->w, src->h};
+        if (SDL_IntersectRect(&r, &full, &r) == SDL_FALSE) {
+            return 0;
+        }
+        SDL_Surface *tmp = IndexedToRgb565(src, r);
+        if (tmp == nullptr) {
+            return -1;
+        }
+        const int rc = SDL_BlitScaled(tmp, nullptr, dst, dstRect);
+        SDL_FreeSurface(tmp);
+        return rc;
     }
     return SDL_BlitScaled(src, srcRect, dst, dstRect);
 }
