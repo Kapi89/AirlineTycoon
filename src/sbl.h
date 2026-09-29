@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 typedef unsigned short word;
 typedef unsigned int dword;
@@ -137,6 +138,7 @@ class SB_CBitmapCore {
     ULONG Rectangle(const RECT *, SB_Hardwarecolor);
     void InitClipRect(void);
     void SetClipRect(const CRect &);
+    void RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void SetColorKey(ULONG);
     virtual ULONG Release(void);
     ULONG BlitFast(class SB_CBitmapCore *, SLONG, SLONG);
@@ -163,6 +165,7 @@ class SB_CBitmapCore {
     SDL_Surface *GetFlippedSurface();
     SDL_PixelFormat *GetPixelFormat(void) { return lpDDSurface->format; }
     SDL_Texture *GetTexture() { return lpTexture; }
+    SDL_Texture *GetHdTexture() const { return HdTexture; }
 
     SLONG GetRef() const { return RefCounter; }
     void IncRef() { ++RefCounter; }
@@ -180,6 +183,7 @@ class SB_CBitmapCore {
     SDL_Surface *lpDDSurface{nullptr};
     SDL_Surface *flippedBufferSurface{nullptr};
     SDL_Texture *lpTexture{nullptr};
+    SDL_Texture *HdTexture{nullptr}; // HD-Fassung (s-fach, mit Alpha), gehoert SB_CPrimaryBitmap (Phase 2, H4)
     XY Size;
 
   private:
@@ -221,6 +225,9 @@ class SB_CCursor {
 // nearMiss (optional): Anzahl deckender Pixel im Rechteck, die je Kanal hoechstens 1 Stufe abweichen.
 SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch, SLONG *nearMiss = nullptr);
 
+// HD-Texturen fuer GLI-Bitmaps (Phase 2, H4): GfxLib meldet freigegebene HD-Surfaces ab
+void SB_ForgetHdSurface(const SDL_Surface *hd);
+
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
     SB_CPrimaryBitmap() = default;
@@ -245,6 +252,13 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ForgetHdTexture(const SDL_Texture *hd);
     void SetOverlayLinear(bool linear);
     void SetHdDebugDir(const char *dir); // nicht leer: Frame, Original und Maske regelmaessig als PNG ablegen
+
+    // Zeichenliste (H4): Blits von Bitmaps mit HD-Textur auf den Primaerpuffer werden
+    // mitgeschrieben und auf der GPU in HD nachgezeichnet.
+    SDL_Texture *GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
+    void ForgetHdSurface(const SDL_Surface *hd);
+    void RecordHdBlit(SB_CBitmapCore *src, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
+    void DropHdBlitsFrom(const SDL_Surface *src);
     bool CanUseHd() const { return lpDD != nullptr && lpTexture != nullptr; }
 
   private:
@@ -266,6 +280,19 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     bool OverlayLinear{false};
     bool HdThisFrame{false};         // Overlay fuer den aktuellen Frame gebaut
     SLONG HdFramesSinceSet{0};
+    struct HdBlit {
+        SDL_Surface *Src;    // 1x-Quelle (fuer die Referenz)
+        SDL_Texture *Tex;    // HD-Textur
+        SDL_Rect SrcRect;    // logisch in der Quelle
+        SDL_Rect Dst;        // logisch im Frame (ungeclippt)
+        SDL_Rect Clip;       // Clip-Rechteck des Primaerpuffers zum Zeitpunkt des Blits
+        bool ColorKey;       // Blit mit Colorkey (sonst deckend)
+    };
+    std::vector<HdBlit> HdBlits;                              // dieser Frame
+    std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCache; // HD-Surface -> Textur
+    SDL_Surface *HdFullRef{};                                 // Referenz fuer den ganzen Frame
+    bool HdBgThisFrame{false};
+    Uint64 HdStatBlits{0}, HdStatBgTransparent{0}, HdStatFrameTotal{0};
     Uint64 HdStatTransparent{0}, HdStatNearMiss{0}, HdStatTotal{0}, HdStatTicks{0}, HdStatLast{0};
     std::string HdDebugDir;
     SLONG HdStatFrames{0};
