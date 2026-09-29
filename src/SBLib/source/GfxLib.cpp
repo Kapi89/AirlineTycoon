@@ -336,6 +336,7 @@ class GfxLib *GfxLib::ReleaseSurface(__int64 name) {
 
 void GfxLib::Release() {
     for (auto &hd : HdSurfaces) {
+        SB_ForgetHdSurface(hd.second);
         SDL_FreeSurface(hd.second);
     }
     HdSurfaces.clear();
