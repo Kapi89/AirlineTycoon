@@ -53,6 +53,7 @@ class GfxLib {
     class GfxLib *ReleaseSurface(__int64);
     SDL_Surface *GetSurface(__int64);
     SDL_Surface *GetSurface(SLONG);
+    SDL_Surface *GetHdSurface(__int64); // HD-Datei in s-facher Groesse (Phase 2), sonst nullptr
     static SLONG AddRef(__int64);
     SLONG AddRef(SLONG);
     __int64 LongName2Id(char *);
@@ -83,6 +84,7 @@ class GfxLib {
     void RelSurface(SLONG);
 
     std::map<__int64, SDL_Surface *> Surfaces;
+    std::map<__int64, SDL_Surface *> HdSurfaces; // s-fache HD-Bilder fuer die GPU-Ebene
     CString Path;
     std::string HdDir; // Ordner mit HD-Ersatzgrafiken, leer wenn keiner existiert
 };

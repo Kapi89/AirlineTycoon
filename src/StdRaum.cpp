@@ -363,6 +363,7 @@ CStdRaum::CStdRaum(BOOL handy, ULONG playerNum, const CString &GfxLibName, __int
     } else {
         PicBitmap.ReSize(pRoomLib, graficId, CREATE_SYSMEM);
     }
+    UpdateHdBackground(graficId);
 
     RoomBm.ReSize(PicBitmap.Size, CREATE_SYSMEM);
 
@@ -435,6 +436,7 @@ CStdRaum::~CStdRaum() {
 
     PlayerNum = -1;
 
+    ReleaseHdBackground();
     PicBitmap.Destroy();
 
     if (pRoomLibStatic == nullptr && (pRoomLib != nullptr) && (pGfxMain != nullptr)) {
@@ -518,6 +520,29 @@ void CStdRaum::ProcessEvent(const SDL_Event &event, const CPoint &position) {
 }
 
 //--------------------------------------------------------------------------------------------
+// HD-Hintergrund (Phase 2): gibt es zum Hintergrund eine HD-Datei in s-facher Groesse,
+// wird sie als GPU-Textur hinter den 1x-Frame gelegt (siehe SB_CPrimaryBitmap::SetHdBackground)
+//--------------------------------------------------------------------------------------------
+void CStdRaum::UpdateHdBackground(__int64 graficId) {
+    ReleaseHdBackground();
+    if (SB_GetRenderScale() <= 1 || pRoomLib == nullptr || graficId == 0 || !PrimaryBm.PrimaryBm.CanUseHd()) {
+        return;
+    }
+    SDL_Surface *hd = pRoomLib->GetHdSurface(graficId);
+    if (hd != nullptr) {
+        HdPicTexture = PrimaryBm.PrimaryBm.CreateHdTexture(hd);
+    }
+}
+
+void CStdRaum::ReleaseHdBackground() {
+    if (HdPicTexture != nullptr) {
+        PrimaryBm.PrimaryBm.ForgetHdTexture(HdPicTexture);
+        SDL_DestroyTexture(HdPicTexture);
+        HdPicTexture = nullptr;
+    }
+}
+
+//--------------------------------------------------------------------------------------------
 // Ein neues Hintergrundbild einbinden:
 //--------------------------------------------------------------------------------------------
 void CStdRaum::ReSize(const CString &GfxLibName, __int64 graficId) {
@@ -539,6 +564,7 @@ void CStdRaum::ReSize(const CString &GfxLibName, __int64 graficId) {
     } else {
         PicBitmap.ReSize(pRoomLib, graficId, CREATE_SYSMEM);
     }
+    UpdateHdBackground(graficId);
 
     RoomBm.ReSize(PicBitmap.Size, CREATE_SYSMEM);
 }
@@ -552,6 +578,7 @@ void CStdRaum::ReSize(__int64 graficId) {
     } else {
         PicBitmap.ReSize(pRoomLib, graficId, CREATE_SYSMEM);
     }
+    UpdateHdBackground(graficId);
 
     RoomBm.ReSize(PicBitmap.Size, CREATE_SYSMEM);
 }
@@ -3536,6 +3563,13 @@ void CStdRaum::OnPaint(BOOL /*bHandyDialog*/) {
 
         if (PicBitmap.Size.x != 0) {
             RoomBm.BlitFrom(PicBitmap, WinP1.x, WinP1.y);
+
+            // HD-Hintergrund anmelden; RoomBm landet unten bei (0,0) im Primaerpuffer.
+            // Nur der Raum, in dem der Spieler steht, nicht z. B. ein Handy-Dialog.
+            if (HdPicTexture != nullptr && PlayerNum >= 0 && Sim.Players.Players[PlayerNum].LocationWin == this) {
+                const SDL_Rect rect{WinP1.x, WinP1.y, PicBitmap.Size.x, PicBitmap.Size.y};
+                PrimaryBm.PrimaryBm.SetHdBackground(HdPicTexture, rect, PicBitmap.pBitmap->GetSurface());
+            }
         }
 
         if (bHandy != 0) // Handy einblendung?

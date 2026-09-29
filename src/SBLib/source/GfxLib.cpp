@@ -116,32 +116,39 @@ static dword PackChannel(Uint8 value, dword mask) {
     return (v << shift) & mask;
 }
 
-// Ersetzt die Pixel eines Bildes durch die HD-Datei, falls vorhanden. Bisher nur in Originalgroesse.
-static void LoadHdPixels(const std::string &dir, const char (&name)[8], const GfxChunkImage &image, char *pixels) {
+// Ersetzt die Pixel eines Bildes durch die HD-Datei, falls vorhanden (Originalgroesse).
+// Ist die HD-Datei genau s-mal so gross (Render-Faktor s > 1), wird sie unveraendert
+// zurueckgegeben und spaeter als GPU-Textur verwendet (Phase 2); sonst nullptr.
+static SDL_Surface *LoadHdPixels(const std::string &dir, const char (&name)[8], const GfxChunkImage &image, char *pixels) {
     fs::path file = fs::path{dir} / (HdChunkName(name) + ".png");
     std::error_code ec;
     if (!fs::is_regular_file(file, ec)) {
-        return;
+        return nullptr;
     }
     if ((image.BitDepth != 16 && image.BitDepth != 24 && image.BitDepth != 32) || image.Height == 0) {
         AT_Log("HD: %s ignoriert, %u Bit pro Pixel werden nicht unterstuetzt", file.string().c_str(), image.BitDepth);
-        return;
+        return nullptr;
     }
 
     SDL_Surface *hd = IMG_Load(file.string().c_str());
     if (hd == nullptr) {
         AT_Log("HD: %s nicht lesbar: %s", file.string().c_str(), IMG_GetError());
-        return;
+        return nullptr;
+    }
+    const SLONG scale = SB_GetRenderScale();
+    if (scale > 1 && dword(hd->w) == image.Width * dword(scale) && dword(hd->h) == image.Height * dword(scale)) {
+        AT_Log("HD: %s in %d-facher Groesse fuer die GPU-Ebene", file.string().c_str(), scale);
+        return hd;
     }
     SDL_Surface *argb = SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0);
     SDL_FreeSurface(hd);
     if (argb == nullptr) {
-        return;
+        return nullptr;
     }
     if (dword(argb->w) != image.Width || dword(argb->h) != image.Height) {
         AT_Log("HD: %s hat %dx%d statt %ux%u Pixel, wird ignoriert", file.string().c_str(), argb->w, argb->h, image.Width, image.Height);
         SDL_FreeSurface(argb);
-        return;
+        return nullptr;
     }
 
     // 24/32-Bit-Chunks ohne Masken: SDL nimmt dann R in 0xFF0000 an (wie tools/gli_export.py)
@@ -165,6 +172,7 @@ static void LoadHdPixels(const std::string &dir, const char (&name)[8], const Gf
     }
     SDL_UnlockSurface(argb);
     SDL_FreeSurface(argb);
+    return nullptr;
 }
 
 GfxMain::GfxMain(SDL_Renderer * /*unused*/) {}
@@ -292,7 +300,10 @@ SLONG GfxLib::ReadGfxChunk(SDL_RWops *file, GfxChunkHeader header, SLONG /*unuse
     char *pixels = new char[image.Size];
     SDL_RWread(file, pixels, 1, image.Size);
     if (!HdDir.empty()) {
-        LoadHdPixels(HdDir, header.Name, image, pixels);
+        SDL_Surface *hd = LoadHdPixels(HdDir, header.Name, image, pixels);
+        if (hd != nullptr) {
+            HdSurfaces[header.Id] = hd;
+        }
     }
     SDL_Surface *surface =
         SDL_CreateRGBSurfaceFrom(pixels, image.Width, image.Height, image.BitDepth, image.Size / image.Height, image.Rmask, image.Gmask, image.Bmask, 0);
@@ -308,6 +319,11 @@ SDL_Surface *GfxLib::GetSurface(__int64 name) {
     return nullptr;
 }
 
+SDL_Surface *GfxLib::GetHdSurface(__int64 name) {
+    auto it = HdSurfaces.find(name);
+    return it != HdSurfaces.end() ? it->second : nullptr;
+}
+
 class GfxLib *GfxLib::ReleaseSurface(__int64 name) {
     auto it = Surfaces.find(name);
     if (it != Surfaces.end()) {
@@ -319,6 +335,11 @@ class GfxLib *GfxLib::ReleaseSurface(__int64 name) {
 }
 
 void GfxLib::Release() {
+    for (auto &hd : HdSurfaces) {
+        SDL_FreeSurface(hd.second);
+    }
+    HdSurfaces.clear();
+
     if (Surfaces.empty()) {
         return;
     }
