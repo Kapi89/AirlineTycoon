@@ -265,7 +265,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void Delete(void);
     void BuildHdOverlay();
     void LogHdStats();
-    void DumpHdDebug();
+    void DumpHdDebug(const std::string &prefix);
+    void CheckHdDip(SLONG transparent, SLONG total);
 
     XY TargetSize{};
     XY TargetOffset{0, 0};
@@ -288,11 +289,17 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
         SDL_Rect Clip;       // Clip-Rechteck des Primaerpuffers zum Zeitpunkt des Blits
         bool ColorKey;       // Blit mit Colorkey (sonst deckend)
     };
-    std::vector<HdBlit> HdBlits;                              // dieser Frame
+    std::vector<HdBlit> HdBlits;                              // wird gerade gezeichnet (bis zum naechsten Flip)
+    std::vector<HdBlit> HdDrawList;                           // gehoert zum Frame im Overlay, gilt fuer jedes Present bis zum naechsten Flip
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCache; // HD-Surface -> Textur
     SDL_Surface *HdFullRef{};                                 // Referenz fuer den ganzen Frame
     bool HdBgThisFrame{false};
     Uint64 HdStatBlits{0}, HdStatBgTransparent{0}, HdStatFrameTotal{0};
+    Uint64 HdStatPresents{0}, HdStatPresentsOnly{0}; // Present insgesamt / ohne vorheriges Flip
+    bool HdFromFlip{false};
+    double HdAvgPct{-1.0};                                    // gleitender Mittelwert "durchsichtig" fuer die Einbruch-Erkennung
+    SLONG HdDipFramesLeft{0}, HdDipSeries{0};
+    Uint64 HdLastDip{0};
     Uint64 HdStatTransparent{0}, HdStatNearMiss{0}, HdStatTotal{0}, HdStatTicks{0}, HdStatLast{0};
     std::string HdDebugDir;
     SLONG HdStatFrames{0};

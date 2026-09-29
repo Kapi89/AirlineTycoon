@@ -704,7 +704,9 @@ void SB_CPrimaryBitmap::ForgetHdSurface(const SDL_Surface *hd) {
     SDL_Texture *tex = it->second;
     HdTexCache.erase(it);
     // Blits dieses Frames mit der Textur verwerfen
-    HdBlits.erase(std::remove_if(HdBlits.begin(), HdBlits.end(), [tex](const HdBlit &b) { return b.Tex == tex; }), HdBlits.end());
+    auto usesTex = [tex](const HdBlit &b) { return b.Tex == tex; };
+    HdBlits.erase(std::remove_if(HdBlits.begin(), HdBlits.end(), usesTex), HdBlits.end());
+    HdDrawList.erase(std::remove_if(HdDrawList.begin(), HdDrawList.end(), usesTex), HdDrawList.end());
     SDL_DestroyTexture(tex);
 }
 
@@ -732,6 +734,7 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
         HdTexture = nullptr;
     }
     if (!HdBgThisFrame && HdBlits.empty()) {
+        HdDrawList.clear();
         return;
     }
     if (Overlay == nullptr) {
@@ -807,14 +810,45 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
     }
     SDL_UnlockTexture(Overlay);
     HdThisFrame = true;
+    // Die aufgezeichneten Blits gehoeren ab jetzt zum Overlay; jedes Present bis zum naechsten
+    // Flip zeichnet genau diese Liste (auch Present ohne neuen Frame aus der Hauptschleife).
+    HdDrawList.swap(HdBlits);
+    HdBlits.clear();
+    CheckHdDip(transparent, full.w * full.h);
 
     HdStatTransparent += transparent;
     HdStatNearMiss += nearMiss;
     HdStatFrameTotal += Uint64(full.w) * Uint64(full.h);
-    HdStatBlits += HdBlits.size();
+    HdStatBlits += HdDrawList.size();
     HdStatTicks += SDL_GetPerformanceCounter() - start;
     HdStatFrames++;
     LogHdStats();
+}
+
+// Einbruch-Erkennung (nur mit Debug-Ordner): Faellt der Anteil durchsichtiger Pixel eines Frames
+// um mehr als 10 Prozentpunkte unter den gleitenden Mittelwert, werden dieser und die naechsten
+// 4 Frames als hd_dip<n>_<k>_{frame,ref,mask}.png gespeichert (hoechstens alle 30 s).
+void SB_CPrimaryBitmap::CheckHdDip(SLONG transparent, SLONG total) {
+    const double pctNow = total != 0 ? 100.0 * double(transparent) / double(total) : 0.0;
+    if (!HdDebugDir.empty()) {
+        const Uint64 now = SDL_GetPerformanceCounter();
+        const Uint64 freq = SDL_GetPerformanceFrequency();
+        if (HdDipFramesLeft == 0 && HdAvgPct >= 0.0 && pctNow < HdAvgPct - 10.0 && (HdLastDip == 0 || now - HdLastDip > 30 * freq)) {
+            HdDipFramesLeft = 5;
+            HdDipSeries++;
+            HdLastDip = now;
+            AT_Log("HD-Debug: Einbruch %.1f %% statt ~%.1f %% durchsichtig (%zu HD-Blits), speichere 5 Frames als hd_dip%d_*", pctNow, HdAvgPct,
+                   HdDrawList.size(), HdDipSeries);
+        }
+        if (HdDipFramesLeft > 0) {
+            char prefix[32];
+            snprintf(prefix, sizeof(prefix), "hd_dip%d_%d_", HdDipSeries, 6 - HdDipFramesLeft);
+            DumpHdDebug(prefix);
+            AT_Log("HD-Debug: %s %.1f %% durchsichtig, %zu HD-Blits", prefix, pctNow, HdDrawList.size());
+            HdDipFramesLeft--;
+        }
+    }
+    HdAvgPct = HdAvgPct < 0.0 ? pctNow : 0.9 * HdAvgPct + 0.1 * pctNow;
 }
 
 void SB_CPrimaryBitmap::LogHdStats() {
@@ -832,14 +866,16 @@ void SB_CPrimaryBitmap::LogHdStats() {
                HdRect.w, HdRect.h);
     }
     AT_Log("HD: %.1f %% des Frames durchsichtig, %.1f %% deckend aber nur knapp abweichend (<=1 Stufe), %.1f HD-Blits/Frame, Overlay %.2f ms/Frame "
-           "(%d Frames)",
+           "(%d Frames, %llu Present davon %llu ohne neuen Frame)",
            pct(HdStatTransparent, HdStatFrameTotal), pct(HdStatNearMiss, HdStatFrameTotal), double(HdStatBlits) / HdStatFrames,
-           1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames);
-    if (!HdDebugDir.empty()) {
-        DumpHdDebug();
+           1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames, static_cast<unsigned long long>(HdStatPresents),
+           static_cast<unsigned long long>(HdStatPresentsOnly));
+    if (!HdDebugDir.empty() && HdDipFramesLeft == 0) {
+        DumpHdDebug("hd_");
     }
     HdStatTransparent = HdStatNearMiss = HdStatTotal = HdStatTicks = 0;
     HdStatBlits = HdStatBgTransparent = HdStatFrameTotal = 0;
+    HdStatPresents = HdStatPresentsOnly = 0;
     HdStatFrames = 0;
     HdStatLast = now;
 }
@@ -847,7 +883,7 @@ void SB_CPrimaryBitmap::LogHdStats() {
 // Legt hd_frame.png (1x-Frame), hd_ref.png (Referenz) und hd_mask.png ab. In der Maske ist
 // durchsichtig = magenta, knapp abweichend = gelb, sonst der Frame-Pixel (= im Overlay deckend).
 // Pixel der Referenz, die nicht zu HD gehoeren, sind invertiert (passen nie).
-void SB_CPrimaryBitmap::DumpHdDebug() {
+void SB_CPrimaryBitmap::DumpHdDebug(const std::string &prefix) {
     if (HdFullRef == nullptr || lpDDSurface == nullptr) {
         return;
     }
@@ -868,11 +904,11 @@ void SB_CPrimaryBitmap::DumpHdDebug() {
             m[x] = f[x] == r[x] ? 0xF81F : (NearlyEqual565(f[x], r[x]) ? 0xFFE0 : f[x]);
         }
     }
-    const std::string base = HdDebugDir + "/";
-    IMG_SavePNG(frame, (base + "hd_frame.png").c_str());
-    IMG_SavePNG(HdFullRef, (base + "hd_ref.png").c_str());
-    if (IMG_SavePNG(mask, (base + "hd_mask.png").c_str()) == 0) {
-        AT_Log("HD-Debug: hd_frame.png, hd_ref.png, hd_mask.png gespeichert");
+    const std::string base = HdDebugDir + "/" + prefix;
+    IMG_SavePNG(frame, (base + "frame.png").c_str());
+    IMG_SavePNG(HdFullRef, (base + "ref.png").c_str());
+    if (IMG_SavePNG(mask, (base + "mask.png").c_str()) == 0) {
+        AT_Log("HD-Debug: %sframe.png, %sref.png, %smask.png gespeichert", prefix.c_str(), prefix.c_str(), prefix.c_str());
     } else {
         AT_Log("HD-Debug: Speichern fehlgeschlagen: %s", IMG_GetError());
     }
@@ -883,6 +919,7 @@ void SB_CPrimaryBitmap::DumpHdDebug() {
 SLONG SB_CPrimaryBitmap::Flip() {
     if (lpDD != nullptr) {
         BuildHdOverlay(); // liest den fertigen Frame, bevor die Textur entsperrt wird
+        HdFromFlip = true;
         /*
          * None of the SDL renderers actually lock the GPU resource,
          * they all use either staging memory or a staging texture.
@@ -930,16 +967,14 @@ SLONG SB_CPrimaryBitmap::Present() {
             auto toTarget = [&](const SDL_Rect &r) {
                 return SDL_FRect{float(TargetOffset.x) + float(r.x) * sx, float(TargetOffset.y) + float(r.y) * sy, float(r.w) * sx, float(r.h) * sy};
             };
-            if (!HdBlits.empty()) {
-                // Basis unter HD-Blits mit weichen Raendern
-                SDL_RenderCopyF(lpDD, lpTexture, nullptr, &full);
-            }
+            // Basis: 1x-Frame, damit unter weichen HD-Raendern nie Schwarz durchscheint
+            SDL_RenderCopyF(lpDD, lpTexture, nullptr, &full);
             if (HdBgThisFrame) {
                 const SDL_FRect bg = toTarget(HdRect);
                 SDL_RenderCopyF(lpDD, HdTexture, nullptr, &bg);
             }
             const SLONG s = SB_GetRenderScale();
-            for (const HdBlit &b : HdBlits) {
+            for (const HdBlit &b : HdDrawList) {
                 const SDL_FRect c = toTarget(b.Clip);
                 const SDL_Rect clip{SLONG(c.x), SLONG(c.y), SLONG(c.x + c.w + 0.999F) - SLONG(c.x), SLONG(c.y + c.h + 0.999F) - SLONG(c.y)};
                 SDL_RenderSetClipRect(lpDD, &clip);
@@ -963,7 +998,11 @@ SLONG SB_CPrimaryBitmap::Present() {
         }
 
         SDL_RenderPresent(lpDD);
-        HdBlits.clear();
+        if (HdThisFrame) {
+            HdStatPresents++;
+            HdStatPresentsOnly += HdFromFlip ? 0 : 1;
+        }
+        HdFromFlip = false;
     } else {
         if (SDL_UpdateWindowSurface(Window) < 0) {
             return -3;
@@ -1017,6 +1056,7 @@ ULONG SB_CPrimaryBitmap::Release() {
         gHdPrimary = nullptr;
     }
     HdBlits.clear();
+    HdDrawList.clear();
     for (auto &t : HdTexCache) {
         SDL_DestroyTexture(t.second);
     }
