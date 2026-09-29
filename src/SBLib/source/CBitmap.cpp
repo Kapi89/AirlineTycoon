@@ -539,7 +539,7 @@ static bool NearlyEqual565(Uint16 a, Uint16 b) {
 
 SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch, SLONG *nearMiss) {
     SLONG transparent = 0;
-    SLONG near = 0;
+    SLONG nearCount = 0;
     for (SLONG y = 0; y < frame->h; y++) {
         const auto *f = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(frame->pixels) + y * frame->pitch);
         auto *d = reinterpret_cast<Uint32 *>(reinterpret_cast<Uint8 *>(dst) + y * dstPitch);
@@ -554,13 +554,13 @@ SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const 
             } else {
                 d[x] = Rgb565ToArgb(f[x]);
                 if (inRect && nearMiss != nullptr && NearlyEqual565(f[x], r[rx])) {
-                    near++;
+                    nearCount++;
                 }
             }
         }
     }
     if (nearMiss != nullptr) {
-        *nearMiss = near;
+        *nearMiss = nearCount;
     }
     return transparent;
 }
