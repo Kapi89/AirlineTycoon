@@ -3,8 +3,11 @@
 #include "Proto.h"
 #include "sbl.h"
 
+#include <SDL_image.h>
 #include <SDL_surface.h>
 #include <SDL_timer.h>
+
+#include <string>
 
 #define AT_Log(...) AT_Log_I("Rendering", __VA_ARGS__)
 
@@ -526,8 +529,17 @@ static Uint32 Rgb565ToArgb(Uint16 v) {
     return table[v];
 }
 
-SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch) {
+// Weicht jeder Kanal (R5 G6 B5) um hoechstens 1 Stufe ab?
+static bool NearlyEqual565(Uint16 a, Uint16 b) {
+    const int dr = int(a >> 11) - int(b >> 11);
+    const int dg = int((a >> 5) & 63) - int((b >> 5) & 63);
+    const int db = int(a & 31) - int(b & 31);
+    return dr >= -1 && dr <= 1 && dg >= -1 && dg <= 1 && db >= -1 && db <= 1;
+}
+
+SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch, SLONG *nearMiss) {
     SLONG transparent = 0;
+    SLONG nearCount = 0;
     for (SLONG y = 0; y < frame->h; y++) {
         const auto *f = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(frame->pixels) + y * frame->pitch);
         auto *d = reinterpret_cast<Uint32 *>(reinterpret_cast<Uint8 *>(dst) + y * dstPitch);
@@ -535,13 +547,20 @@ SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const 
         const Uint16 *r = rowInRect ? reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(ref->pixels) + (y - rect.y) * ref->pitch) : nullptr;
         for (SLONG x = 0; x < frame->w; x++) {
             const SLONG rx = x - rect.x;
-            if (r != nullptr && rx >= 0 && rx < rect.w && rx < ref->w && f[x] == r[rx]) {
+            const bool inRect = r != nullptr && rx >= 0 && rx < rect.w && rx < ref->w;
+            if (inRect && f[x] == r[rx]) {
                 d[x] = 0; // durchsichtig: HD-Hintergrund sichtbar
                 transparent++;
             } else {
                 d[x] = Rgb565ToArgb(f[x]);
+                if (inRect && nearMiss != nullptr && NearlyEqual565(f[x], r[rx])) {
+                    nearCount++;
+                }
             }
         }
+    }
+    if (nearMiss != nullptr) {
+        *nearMiss = nearCount;
     }
     return transparent;
 }
@@ -598,6 +617,57 @@ void SB_CPrimaryBitmap::SetOverlayLinear(bool linear) {
     AT_Log("HD-Overlay-Filter: %s", linear ? "linear" : "nearest");
 }
 
+void SB_CPrimaryBitmap::SetHdDebugDir(const char *dir) {
+    HdDebugDir = dir != nullptr ? dir : "";
+    if (!HdDebugDir.empty()) {
+        AT_Log("HD-Debug: Masken-PNGs nach %s", HdDebugDir.c_str());
+    }
+}
+
+// Legt hd_frame.png (1x-Frame), hd_ref.png (1x-Original) und hd_mask.png ab. In der Maske ist
+// durchsichtig = magenta, knapp abweichend = gelb, sonst der Frame-Pixel (= im Overlay deckend).
+void SB_CPrimaryBitmap::DumpHdDebug() {
+    if (HdRef == nullptr || lpDDSurface == nullptr) {
+        return;
+    }
+    SDL_Surface *mask = SDL_CreateRGBSurfaceWithFormat(0, lpDDSurface->w, lpDDSurface->h, 16, SDL_PIXELFORMAT_RGB565);
+    SDL_Surface *frame = SDL_CreateRGBSurfaceWithFormat(0, lpDDSurface->w, lpDDSurface->h, 16, SDL_PIXELFORMAT_RGB565);
+    if (mask == nullptr || frame == nullptr) {
+        SDL_FreeSurface(mask);
+        SDL_FreeSurface(frame);
+        return;
+    }
+    for (SLONG y = 0; y < lpDDSurface->h; y++) {
+        const auto *f = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(lpDDSurface->pixels) + y * lpDDSurface->pitch);
+        auto *m = reinterpret_cast<Uint16 *>(static_cast<Uint8 *>(mask->pixels) + y * mask->pitch);
+        auto *fr = reinterpret_cast<Uint16 *>(static_cast<Uint8 *>(frame->pixels) + y * frame->pitch);
+        const SLONG ry = y - HdRect.y;
+        const Uint16 *r = (ry >= 0 && ry < HdRect.h && ry < HdRef->h) ? reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(HdRef->pixels) + ry * HdRef->pitch) : nullptr;
+        for (SLONG x = 0; x < lpDDSurface->w; x++) {
+            const SLONG rx = x - HdRect.x;
+            fr[x] = f[x];
+            m[x] = f[x];
+            if (r != nullptr && rx >= 0 && rx < HdRect.w && rx < HdRef->w) {
+                if (f[x] == r[rx]) {
+                    m[x] = 0xF81F;
+                } else if (NearlyEqual565(f[x], r[rx])) {
+                    m[x] = 0xFFE0;
+                }
+            }
+        }
+    }
+    const std::string base = HdDebugDir + "/";
+    IMG_SavePNG(frame, (base + "hd_frame.png").c_str());
+    IMG_SavePNG(HdRef, (base + "hd_ref.png").c_str());
+    if (IMG_SavePNG(mask, (base + "hd_mask.png").c_str()) == 0) {
+        AT_Log("HD-Debug: hd_frame.png, hd_ref.png, hd_mask.png gespeichert");
+    } else {
+        AT_Log("HD-Debug: Speichern fehlgeschlagen: %s", IMG_GetError());
+    }
+    SDL_FreeSurface(mask);
+    SDL_FreeSurface(frame);
+}
+
 void SB_CPrimaryBitmap::BuildHdOverlay() {
     HdThisFrame = false;
     // Ebene gilt nur, solange der Raum sie beim Zeichnen erneuert
@@ -622,11 +692,13 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
     if (SDL_LockTexture(Overlay, nullptr, &pixels, &pitch) < 0) {
         return;
     }
-    const SLONG transparent = SB_BuildHdOverlay(lpDDSurface, HdRef, HdRect, static_cast<Uint32 *>(pixels), pitch);
+    SLONG nearMiss = 0;
+    const SLONG transparent = SB_BuildHdOverlay(lpDDSurface, HdRef, HdRect, static_cast<Uint32 *>(pixels), pitch, &nearMiss);
     SDL_UnlockTexture(Overlay);
     HdThisFrame = true;
 
     HdStatTransparent += transparent;
+    HdStatNearMiss += nearMiss;
     HdStatTotal += Uint64(min(HdRect.w, HdRef->w)) * Uint64(min(HdRect.h, HdRef->h));
     HdStatTicks += SDL_GetPerformanceCounter() - start;
     HdStatFrames++;
@@ -642,10 +714,16 @@ void SB_CPrimaryBitmap::LogHdStats() {
     if (now - HdStatLast < 5 * freq || HdStatFrames == 0) {
         return;
     }
-    AT_Log("HD-Hintergrund: %.1f %% durchsichtig, Overlay %.2f ms/Frame (%d Frames)",
+    // Bezugsgroesse ist das Hintergrund-Rechteck (z. B. 640x440), nicht der ganze Frame
+    AT_Log("HD-Hintergrund: %.1f %% des Hintergrunds durchsichtig, %.1f %% deckend aber nur knapp abweichend (<=1 Stufe), Overlay %.2f ms/Frame "
+           "(%d Frames)",
            HdStatTotal != 0 ? 100.0 * double(HdStatTransparent) / double(HdStatTotal) : 0.0,
-           1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames);
-    HdStatTransparent = HdStatTotal = HdStatTicks = 0;
+           HdStatTotal != 0 ? 100.0 * double(HdStatNearMiss) / double(HdStatTotal) : 0.0, 1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames,
+           HdStatFrames);
+    if (!HdDebugDir.empty()) {
+        DumpHdDebug();
+    }
+    HdStatTransparent = HdStatNearMiss = HdStatTotal = HdStatTicks = 0;
     HdStatFrames = 0;
     HdStatLast = now;
 }

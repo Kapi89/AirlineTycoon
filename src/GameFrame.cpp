@@ -336,6 +336,12 @@ GameFrame::GameFrame() {
     PrimaryBm.ReSize(h, bFullscreen, SB_GetLogicalSize());
     PrimaryBm.ReSizePartB(h, bFullscreen, SB_GetLogicalSize());
     PrimaryBm.PrimaryBm.SetOverlayLinear(Sim.Options.OptionHdOverlayFilter == 1);
+    if (Sim.Options.OptionHdDebugMask != 0) {
+        const fs::path debugDir = fs::path{AppPath.c_str()} / "hd_debug";
+        std::error_code ec;
+        fs::create_directories(debugDir, ec);
+        PrimaryBm.PrimaryBm.SetHdDebugDir(debugDir.string().c_str());
+    }
     pCursor = new SB_CCursor(&PrimaryBm.PrimaryBm);
     PrimaryBm.PrimaryBm.AssignCursor(pCursor);
 
