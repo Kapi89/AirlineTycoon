@@ -37,6 +37,7 @@ gamefiles/*
 *.safetensors
 *.onnx
 hd/
+hd_debug/
 hd_assets/
 assets_export/
 upscaled/
