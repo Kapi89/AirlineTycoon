@@ -68,6 +68,9 @@ class CStdRaum {
     SLONG TimeBubbleDisplayed{}; // Wann wurde diese Sprechblase eröffnet (wg. Timeout beim Gespräch mit Spielern)
     GfxLib *pRoomLib;            // Library für den Raum;
     SBBM PicBitmap;              // Der Raum
+    SDL_Texture *HdPicTexture{}; // HD-Fassung von PicBitmap als GPU-Textur (Phase 2), sonst nullptr
+    void UpdateHdBackground(__int64 graficId);
+    void ReleaseHdBackground();
     SBBM OnscreenBitmap;         // On-Screen Dialoge & Menüs
     SBBM NumberBitmap;           // Mit dieser Bitmap werden Zahlen eingeblendet, die früher über Zahlensynthese erzeugt wurden
     XY NumberBitmapPos;          // Position der NumberBitmap
