@@ -335,6 +335,7 @@ GameFrame::GameFrame() {
     SB_SetRenderScale(Sim.Options.OptionRenderScale);
     PrimaryBm.ReSize(h, bFullscreen, SB_GetLogicalSize());
     PrimaryBm.ReSizePartB(h, bFullscreen, SB_GetLogicalSize());
+    PrimaryBm.PrimaryBm.SetOverlayLinear(Sim.Options.OptionHdOverlayFilter == 1);
     pCursor = new SB_CCursor(&PrimaryBm.PrimaryBm);
     PrimaryBm.PrimaryBm.AssignCursor(pCursor);
 

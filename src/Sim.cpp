@@ -3982,6 +3982,9 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionRenderScale) || OptionRenderScale < 1 || OptionRenderScale > 4) {
             OptionRenderScale = 1;
         }
+        if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
+            OptionHdOverlayFilter = 0;
+        }
         if (!reg.ReadRegistryKey_u(OptionTicketPriceIncrement)) {
             OptionTicketPriceIncrement = 10;
         }
@@ -4262,6 +4265,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionFullscreen);
     reg.WriteRegistryKey_b(OptionKeepAspectRatio);
     reg.WriteRegistryKey_l(OptionRenderScale);
+    reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_u(OptionTicketPriceIncrement);
     reg.WriteRegistryKey_u(OptionRentOfficeTriggerPercent);
     reg.WriteRegistryKey_u(OptionRentOfficeMinAvailable);

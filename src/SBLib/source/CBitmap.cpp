@@ -508,8 +508,151 @@ bool SB_CPrimaryBitmap::FastClip(CRect clipRect, POINT *pPoint, RECT *pRect) {
     return pRect->right - pRect->left > 0 && pRect->bottom - pRect->top > 0;
 }
 
+//--------------------------------------------------------------------------------------------
+// HD-Hintergrund-Ebene (Phase 2, H1)
+//--------------------------------------------------------------------------------------------
+static Uint32 Rgb565ToArgb(Uint16 v) {
+    static Uint32 table[65536];
+    static bool init = false;
+    if (!init) {
+        for (Uint32 i = 0; i < 65536; i++) {
+            const Uint32 r = ((i >> 11) & 31) * 255 / 31;
+            const Uint32 g = ((i >> 5) & 63) * 255 / 63;
+            const Uint32 b = (i & 31) * 255 / 31;
+            table[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+        init = true;
+    }
+    return table[v];
+}
+
+SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch) {
+    SLONG transparent = 0;
+    for (SLONG y = 0; y < frame->h; y++) {
+        const auto *f = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(frame->pixels) + y * frame->pitch);
+        auto *d = reinterpret_cast<Uint32 *>(reinterpret_cast<Uint8 *>(dst) + y * dstPitch);
+        const bool rowInRect = y >= rect.y && y < rect.y + rect.h && y - rect.y < ref->h;
+        const Uint16 *r = rowInRect ? reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(ref->pixels) + (y - rect.y) * ref->pitch) : nullptr;
+        for (SLONG x = 0; x < frame->w; x++) {
+            const SLONG rx = x - rect.x;
+            if (r != nullptr && rx >= 0 && rx < rect.w && rx < ref->w && f[x] == r[rx]) {
+                d[x] = 0; // durchsichtig: HD-Hintergrund sichtbar
+                transparent++;
+            } else {
+                d[x] = Rgb565ToArgb(f[x]);
+            }
+        }
+    }
+    return transparent;
+}
+
+SDL_Texture *SB_CPrimaryBitmap::CreateHdTexture(SDL_Surface *surface) {
+    if (!CanUseHd() || surface == nullptr) {
+        return nullptr;
+    }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, surface);
+    if (tex != nullptr) {
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    } else {
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", surface->w, surface->h, SDL_GetError());
+    }
+    return tex;
+}
+
+void SB_CPrimaryBitmap::SetHdBackground(SDL_Texture *hd, const SDL_Rect &logicalRect, const SDL_Surface *ref1x) {
+    if (!CanUseHd() || hd == nullptr || ref1x == nullptr || ref1x->format->format != SDL_PIXELFORMAT_RGB565) {
+        return;
+    }
+    if (hd != HdTexture || HdRef == nullptr || HdRef->w != ref1x->w || HdRef->h != ref1x->h) {
+        // Neues Original: Kopie anlegen (die Quelle kann RLE-kodiert sein, daher ueber Lock)
+        if (HdRef != nullptr) {
+            SDL_FreeSurface(HdRef);
+        }
+        HdRef = SDL_CreateRGBSurfaceWithFormat(0, ref1x->w, ref1x->h, 16, SDL_PIXELFORMAT_RGB565);
+        auto *src = const_cast<SDL_Surface *>(ref1x);
+        SDL_LockSurface(src);
+        for (SLONG y = 0; y < ref1x->h; y++) {
+            memcpy(static_cast<Uint8 *>(HdRef->pixels) + y * HdRef->pitch, static_cast<const Uint8 *>(src->pixels) + y * src->pitch, ref1x->w * 2);
+        }
+        SDL_UnlockSurface(src);
+        AT_Log("HD-Hintergrund aktiv: %dx%d an %d,%d", ref1x->w, ref1x->h, logicalRect.x, logicalRect.y);
+    }
+    HdTexture = hd;
+    HdRect = logicalRect;
+    HdFramesSinceSet = 0;
+}
+
+void SB_CPrimaryBitmap::ForgetHdTexture(const SDL_Texture *hd) {
+    if (hd != nullptr && hd == HdTexture) {
+        HdTexture = nullptr;
+        HdThisFrame = false;
+    }
+}
+
+void SB_CPrimaryBitmap::SetOverlayLinear(bool linear) {
+    OverlayLinear = linear;
+    if (Overlay != nullptr) {
+        SDL_SetTextureScaleMode(Overlay, linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+    }
+    AT_Log("HD-Overlay-Filter: %s", linear ? "linear" : "nearest");
+}
+
+void SB_CPrimaryBitmap::BuildHdOverlay() {
+    HdThisFrame = false;
+    // Ebene gilt nur, solange der Raum sie beim Zeichnen erneuert
+    if (HdTexture == nullptr || HdRef == nullptr || HdFramesSinceSet++ > 2) {
+        HdTexture = nullptr;
+        return;
+    }
+    if (Overlay == nullptr) {
+        Overlay = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, Size.x, Size.y);
+        if (Overlay == nullptr) {
+            AT_Log("HD: Overlay nicht angelegt: %s", SDL_GetError());
+            HdTexture = nullptr;
+            return;
+        }
+        SDL_SetTextureBlendMode(Overlay, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(Overlay, OverlayLinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+    }
+
+    const Uint64 start = SDL_GetPerformanceCounter();
+    void *pixels = nullptr;
+    int pitch = 0;
+    if (SDL_LockTexture(Overlay, nullptr, &pixels, &pitch) < 0) {
+        return;
+    }
+    const SLONG transparent = SB_BuildHdOverlay(lpDDSurface, HdRef, HdRect, static_cast<Uint32 *>(pixels), pitch);
+    SDL_UnlockTexture(Overlay);
+    HdThisFrame = true;
+
+    HdStatTransparent += transparent;
+    HdStatTotal += Uint64(min(HdRect.w, HdRef->w)) * Uint64(min(HdRect.h, HdRef->h));
+    HdStatTicks += SDL_GetPerformanceCounter() - start;
+    HdStatFrames++;
+    LogHdStats();
+}
+
+void SB_CPrimaryBitmap::LogHdStats() {
+    const Uint64 now = SDL_GetPerformanceCounter();
+    const Uint64 freq = SDL_GetPerformanceFrequency();
+    if (HdStatLast == 0) {
+        HdStatLast = now;
+    }
+    if (now - HdStatLast < 5 * freq || HdStatFrames == 0) {
+        return;
+    }
+    AT_Log("HD-Hintergrund: %.1f %% durchsichtig, Overlay %.2f ms/Frame (%d Frames)",
+           HdStatTotal != 0 ? 100.0 * double(HdStatTransparent) / double(HdStatTotal) : 0.0,
+           1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames);
+    HdStatTransparent = HdStatTotal = HdStatTicks = 0;
+    HdStatFrames = 0;
+    HdStatLast = now;
+}
+
 SLONG SB_CPrimaryBitmap::Flip() {
     if (lpDD != nullptr) {
+        BuildHdOverlay(); // liest den fertigen Frame, bevor die Textur entsperrt wird
         /*
          * None of the SDL renderers actually lock the GPU resource,
          * they all use either staging memory or a staging texture.
@@ -549,8 +692,18 @@ SLONG SB_CPrimaryBitmap::Present() {
         }
 
         const SDL_Rect target = SDL_Rect{TargetOffset.x, TargetOffset.y, TargetSize.x, TargetSize.y};
-        // Copy our primary texture to the backbuffer
-        if (SDL_RenderCopy(lpDD, lpTexture, nullptr, &target) < 0) {
+        if (HdThisFrame) {
+            // HD-Hintergrund an seine logische Lage, darueber der 1x-Frame mit Differenzmaske
+            const float sx = float(TargetSize.x) / float(Size.x);
+            const float sy = float(TargetSize.y) / float(Size.y);
+            const SDL_FRect bg{float(TargetOffset.x) + float(HdRect.x) * sx, float(TargetOffset.y) + float(HdRect.y) * sy, float(HdRect.w) * sx,
+                               float(HdRect.h) * sy};
+            const SDL_FRect full{float(TargetOffset.x), float(TargetOffset.y), float(TargetSize.x), float(TargetSize.y)};
+            if (SDL_RenderCopyF(lpDD, HdTexture, nullptr, &bg) < 0 || SDL_RenderCopyF(lpDD, Overlay, nullptr, &full) < 0) {
+                return -2;
+            }
+        } else if (SDL_RenderCopy(lpDD, lpTexture, nullptr, &target) < 0) {
+            // Copy our primary texture to the backbuffer
             return -2;
         }
 
@@ -608,6 +761,10 @@ SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned sh
 }
 
 ULONG SB_CPrimaryBitmap::Release() {
+    if (HdRef != nullptr) {
+        SDL_FreeSurface(HdRef);
+        HdRef = nullptr;
+    }
     if (lpDD == nullptr) {
         if (lpDDSurface != nullptr) {
             SDL_FreeSurface(lpDDSurface);
@@ -615,6 +772,11 @@ ULONG SB_CPrimaryBitmap::Release() {
         }
         assert(lpTexture == nullptr);
     } else {
+        if (Overlay != nullptr) {
+            SDL_DestroyTexture(Overlay);
+            Overlay = nullptr;
+        }
+        HdTexture = nullptr;
         if (lpTexture != nullptr) {
             SDL_DestroyTexture(lpTexture);
             lpTexture = nullptr;

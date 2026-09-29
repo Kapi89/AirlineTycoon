@@ -2456,6 +2456,7 @@ class COptions {
     SLONG OptionFullscreen{};
     BOOL OptionKeepAspectRatio{};
     SLONG OptionRenderScale{}; // Render-Faktor s (1 = wie bisher), wirkt beim Neustart
+    SLONG OptionHdOverlayFilter{}; // Filter fuer das 1x-Overlay ueber HD-Hintergruenden: 0 = nearest, 1 = linear
     SLONG OptionScreenWindowedWidth{};
     SLONG OptionScreenWindowedHeight{};
     BOOL OptionPlanes{};
