@@ -213,6 +213,11 @@ class SB_CCursor {
     XY Position;
 };
 
+// HD-Hintergrund (Phase 2, H1): baut das Overlay (ARGB8888, Groesse des Frames) aus dem
+// fertigen 1x-Frame. Pixel im Rechteck rect, die genau dem 1x-Original ref entsprechen,
+// werden durchsichtig, alle anderen zeigen den Frame. Rueckgabe: Anzahl durchsichtiger Pixel.
+SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const SDL_Rect &rect, Uint32 *dst, SLONG dstPitch);
+
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
     SB_CPrimaryBitmap() = default;
@@ -229,14 +234,35 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_Window *GetPrimarySurface() { return Window; }
     static bool FastClip(CRect clipRect, POINT *pPoint, RECT *pRect);
 
+    // HD-Hintergrund-Ebene (Phase 2, docs/phase2-plan.md): Die GPU zeichnet die HD-Textur und
+    // darueber den 1x-Frame, der dort durchsichtig ist, wo er noch dem 1x-Original entspricht.
+    // Der Aufrufer (Raum) setzt die Ebene bei jedem Zeichnen und besitzt die Textur.
+    SDL_Texture *CreateHdTexture(SDL_Surface *surface);
+    void SetHdBackground(SDL_Texture *hd, const SDL_Rect &logicalRect, const SDL_Surface *ref1x);
+    void ForgetHdTexture(const SDL_Texture *hd);
+    void SetOverlayLinear(bool linear);
+    bool CanUseHd() const { return lpDD != nullptr && lpTexture != nullptr; }
+
   private:
     void Delete(void);
+    void BuildHdOverlay();
+    void LogHdStats();
 
     XY TargetSize{};
     XY TargetOffset{0, 0};
 
     SDL_Window *Window{};
     SB_CCursor *Cursor{};
+
+    SDL_Texture *HdTexture{};        // gehoert dem Raum
+    SDL_Rect HdRect{};               // logische Lage im Frame
+    SDL_Surface *HdRef{};            // Kopie des 1x-Originals (RGB565)
+    SDL_Texture *Overlay{};          // 1x-Frame mit Differenzmaske
+    bool OverlayLinear{false};
+    bool HdThisFrame{false};         // Overlay fuer den aktuellen Frame gebaut
+    SLONG HdFramesSinceSet{0};
+    Uint64 HdStatTransparent{0}, HdStatTotal{0}, HdStatTicks{0}, HdStatLast{0};
+    SLONG HdStatFrames{0};
 };
 
 class SB_CBitmapMain {
