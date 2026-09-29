@@ -41,8 +41,8 @@ Fenster (z. B. 2560x1920)
 - Korrekt ohne Sonderfälle: Alles, was die Engine über den Hintergrund zeichnet, erscheint so, wie es gezeichnet wurde.
 
 **Grenzen (bewusst in Kauf genommen, später verbessert):**
-- **Effekte, die den Hintergrund verändern, erscheinen in diesem Bereich in 1x**, weil sich dort das 1x-Bild vom Original unterscheidet. Beispiele: Schatten, Glas der Bürotür, dunkles Büro, Überblendungen beim Raumwechsel. Das ist sichtbar treppig, aber richtig. Verbesserung in Schritt H6.
-- **Personen und Sprites bleiben 1x.** HD-Sprites kommen erst über eine Zeichenliste (H5 / Phase 4).
+- **Effekte, die den Hintergrund verändern, erscheinen in diesem Bereich in 1x**, weil sich dort das 1x-Bild vom Original unterscheidet. Beispiele: Schatten, Glas der Bürotür, dunkles Büro, Überblendungen beim Raumwechsel. Das ist sichtbar treppig, aber richtig. Verbesserung in Schritt H5.
+- **Personen und Sprites bleiben 1x.** HD-Sprites kommen erst über eine Zeichenliste (H6 / Phase 4).
 
 Die Kombination aus Faktor je Bitmap, Bildschirmpuffern in s× und nativem Umbau aller Pixelzugriffe entfällt für Phase 2. Der Prototyp hat gezeigt, dass sie für die Halle zu teuer ist.
 
@@ -89,8 +89,8 @@ Nach jedem Schritt ist das Spiel spielbar. Ohne HD-Dateien oder mit s=1 ist das 
 | H2 | **Räume mit Einzelhintergrund:** `CStdRaum` lädt zum Hintergrund-Chunk die HD-Datei (s-fach, aus `hd/<ordner>/<datei>/<chunk>.png`) als Textur und setzt die Ebene mit Position im Primärpuffer (Hintergrund → `RoomBm` → Primärpuffer); beim Verlassen des Raums wieder entfernen. `GfxLib` liefert dafür die HD-Surface getrennt vom 1x-Original (die 1x-Ersetzung aus Phase 1 bleibt für 1x-HD-Dateien) | **Meilenstein 1: Büro-Hintergrund in HD (2560x1920 bei s=4)** |
 | H3 | Messung und Feinschliff: fps im Büro mit HD; Ränder am Übergang HD/Overlay prüfen; Fall "Hintergrund verschoben" (Handy-Dialog, Scrollen) testen | Messwerte |
 | H4 | **Halle:** Zeichenliste für Bausteine mit HD-Datei; 1x-Referenz nur aus Bausteinen; GPU zeichnet HD-Bausteine in Listenreihenfolge unter das Overlay | Halle mit HD-Bausteinen |
-| H5 | HD-Sprites über dieselbe Zeichenliste (Berater, Gegenstände); Maske je Sprite aus dem Original, dabei weich hochskaliert mit Schwelle (siehe unten) | HD-Sprites |
-| H6 | Effekte über HD: Abdunkeln durch Schatten und dunkles Büro als halbtransparentes Schwarz im Overlay statt 1x-Pixel (Verhältnis Frame/Original je Pixel) | Schatten ohne Treppen |
+| H5 | Effekte über HD: Abdunkeln durch Schatten und dunkles Büro als halbtransparentes Schwarz im Overlay statt 1x-Pixel (Verhältnis Frame/Original je Pixel); **vor den HD-Sprites, zuerst für die Halle**, sonst entstehen 1x-Inseln um jede Person | Schatten ohne Treppen |
+| H6 | HD-Sprites über dieselbe Zeichenliste (Berater, Gegenstände); Maske je Sprite aus dem Original, dabei weich hochskaliert mit Schwelle (siehe unten) | HD-Sprites |
 | H7 | Schrift in HD (Glyphenblätter oder TTF) als GPU-Ebene | scharfe Schrift |
 
 Meilenstein 1 braucht die Schritte H1 und H2.
@@ -113,7 +113,9 @@ Meilenstein 1 braucht die Schritte H1 und H2.
 
 ## Offene Punkte und Risiken
 
-- **Überblendungen und dunkles Büro:** Dabei ändert sich fast der ganze Frame, dort ist dann vorübergehend alles 1x. Beim Raumwechsel ist das kurz; das dunkle Büro verbessert H6.
+- **Stand H1/H2:** H1 ist PR #8, H2 ist PR #9. Büro-HD-Hintergründe (4x-UltraSharp, 2560x1760) liegen beim Spieler unter `hd/room/buero_[a-d].gli/BUERO.png`; auf 1x verkleinert weichen sie im Mittel 3,7/255 vom Original ab (Helligkeit +1). Das stört die Maske nicht, weil sie gegen das Original vergleicht.
+- **Overlay-Filter:** wählbar über `OptionHdOverlayFilter` (0 = nearest, 1 = linear) für den Vergleich in H3.
+- **Überblendungen und dunkles Büro:** Dabei ändert sich fast der ganze Frame, dort ist dann vorübergehend alles 1x. Beim Raumwechsel ist das kurz; das dunkle Büro verbessert H5.
 - **Exakte Übereinstimmung:** Wenn die Engine den Hintergrund nicht 1:1 blittet (z. B. verschoben oder beschnitten), muss die Referenz dieselbe Geometrie haben. In H2 prüft deshalb ein Log-Zähler den Anteil durchsichtiger Pixel je Frame; im leeren Büro soll er nahe 100 % liegen.
-- **Übergang HD/1x:** Um Sprites herum grenzt HD-Hintergrund direkt an 1x-Pixel. Wie störend das ist, prüfen wir in H3. Abhilfe bringen die HD-Sprites in H5.
+- **Übergang HD/1x:** Um Sprites herum grenzt HD-Hintergrund direkt an 1x-Pixel. Wie störend das ist, prüfen wir in H3. Abhilfe bringen die HD-Sprites in H6.
 - **Ältere Grafiktreiber:** Ohne Hardware-Renderer (Software-Fallback in `Present`) bleibt es bei 1x, die HD-Ebene wird dann übersprungen.
