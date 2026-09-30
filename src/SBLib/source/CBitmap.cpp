@@ -60,6 +60,12 @@ bool SB_GetHdMissingLog() { return gHdMissingLog; }
 void SB_SetHdRoom(const char *room) { gHdRoom = room != nullptr && room[0] != '\0' ? room : "-"; }
 
 // Einmal je Chunk: wird in 1x gezeichnet, obwohl HD aktiv ist
+void SB_KeepHdSource(SDL_Surface *src) {
+    if (gHdPrimary != nullptr) {
+        gHdPrimary->KeepHdSource(src);
+    }
+}
+
 void SB_ReportHdMissing(const std::string &name, SLONG w, SLONG h, const char *why) {
     if (!gHdMissingLog || name.empty() || !gHdMissingSeen.insert(name).second) {
         return;
@@ -586,7 +592,7 @@ ULONG SB_CBitmapCore::BlitChar(SDL_Surface *font, SLONG x, SLONG y, const SDL_Re
     SDL_Rect dst = {x, y, rect.w, rect.h};
     const int rc = SDL_BlitSurface(font, &rect, lpDDSurface, &dst);
     if (hd != nullptr && gHdPrimary != nullptr) {
-        gHdPrimary->RecordHdTex(this, font, hd, rect, x, y, true); // Zeichen aus dem HD-Glyphenblatt (H7)
+        gHdPrimary->RecordHdTex(this, font, hd, rect, x, y, true, true); // Zeichen aus dem HD-Glyphenblatt (H7)
     }
     return rc;
 }
@@ -734,7 +740,6 @@ void SB_CPrimaryBitmap::SetHdBase(SB_CBitmapCore *bm, SDL_Texture *hd, SDL_Surfa
 
 void SB_CPrimaryBitmap::ForEachHdList(const std::function<void(std::vector<SB_HdEntry> &)> &fn) {
     fn(HdBlits);
-    fn(HdDrawList);
     for (SB_CBitmapCore *core : HdTracked) {
         if (core->HdList != nullptr) {
             fn(*core->HdList);
@@ -742,13 +747,33 @@ void SB_CPrimaryBitmap::ForEachHdList(const std::function<void(std::vector<SB_Hd
     }
 }
 
-void SB_CPrimaryBitmap::ForgetHdTexture(const SDL_Texture *hd) {
+// Entfernt Eintraege, fuer die drop() gilt, auch aus den Unterlisten von Sprechblasen (Kind 3)
+template <typename Pred> static void HdEraseIf(std::vector<SB_HdEntry> &list, const Pred &drop) {
+    list.erase(std::remove_if(list.begin(), list.end(), drop), list.end());
+    for (SB_HdEntry &e : list) {
+        if (e.Sub && std::any_of(e.Sub->begin(), e.Sub->end(), drop)) {
+            auto sub = std::make_shared<std::vector<SB_HdEntry>>(*e.Sub);
+            sub->erase(std::remove_if(sub->begin(), sub->end(), drop), sub->end());
+            e.Sub = sub;
+        }
+    }
+}
+
+void SB_CPrimaryBitmap::DestroyHdTextureLater(SDL_Texture *tex) {
+    if (tex != nullptr) {
+        HdAlphaTex.erase(tex);
+        HdGraveyard.push_back(tex); // HdDrawList kann sie bis zum naechsten Frame noch zeichnen
+    }
+}
+
+void SB_CPrimaryBitmap::ForgetHdTexture(SDL_Texture *hd) {
     if (hd == nullptr) {
         return;
     }
     ForEachHdList([hd](std::vector<SB_HdEntry> &list) {
-        list.erase(std::remove_if(list.begin(), list.end(), [hd](const SB_HdEntry &e) { return e.Tex == hd; }), list.end());
+        HdEraseIf(list, [hd](const SB_HdEntry &e) { return e.Tex == hd || e.Tex2 == hd || e.Tex3 == hd; });
     });
+    DestroyHdTextureLater(hd);
 }
 
 void SB_CPrimaryBitmap::SetOverlayLinear(bool linear) {
@@ -902,8 +927,6 @@ void SB_CPrimaryBitmap::ForgetHdSurface(const SDL_Surface *hd) {
     SDL_Texture *tex = it->second;
     HdTexCache.erase(it);
     ForgetHdTexture(tex);
-    HdAlphaTex.erase(tex);
-    SDL_DestroyTexture(tex);
 }
 
 // Bitmap wird freigegeben: ihre Eintragsliste verfaellt. Eintraege anderer Listen mit ihr als Quelle
@@ -919,45 +942,55 @@ void SB_CPrimaryBitmap::DropHdBlitsFrom(SB_CBitmapCore *core) {
     if (src == nullptr) {
         return;
     }
-    SDL_Texture *own[2] = {nullptr, nullptr};
     auto shade = HdShadeCache.find(src);
     if (shade != HdShadeCache.end()) {
-        own[0] = shade->second;
+        SDL_Texture *t = shade->second;
         HdShadeCache.erase(shade);
+        ForgetHdTexture(t);
     }
-    auto flat = Hd1xCache.find(src);
-    if (flat != Hd1xCache.end()) {
-        own[1] = flat->second;
-        Hd1xCache.erase(flat);
+    auto flat = HdFlatCache.find(src);
+    if (flat != HdFlatCache.end()) {
+        const HdFlat f = flat->second;
+        HdFlatCache.erase(flat);
+        for (SDL_Texture *t : {f.Full, f.White, f.Rest}) {
+            ForgetHdTexture(t);
+        }
+    }
+    KeepHdSource(src);
+}
+
+// Eintraege mit src als 1x-Quelle bekommen eine eigene Kopie (die Surface wird gleich freigegeben)
+void SB_CPrimaryBitmap::KeepHdSource(SDL_Surface *src) {
+    if (src == nullptr) {
+        return;
     }
     std::shared_ptr<SDL_Surface> copy;
-    ForEachHdList([&](std::vector<SB_HdEntry> &list) {
-        list.erase(std::remove_if(list.begin(), list.end(),
-                                  [&](const SB_HdEntry &e) { return e.Tex != nullptr && (e.Tex == own[0] || e.Tex == own[1]); }),
-                   list.end());
+    bool failed = false;
+    auto keep = [&](std::vector<SB_HdEntry> &list) {
         for (SB_HdEntry &e : list) {
             if (e.Src != src) {
                 continue;
             }
-            if (!copy) {
+            if (!copy && !failed) {
                 SDL_Surface *c = SDL_ConvertSurface(src, src->format, 0);
                 Uint32 key = 0;
                 if (c != nullptr && SDL_GetColorKey(src, &key) == 0) {
                     SDL_SetColorKey(c, SDL_TRUE, key);
                 }
-                copy = std::shared_ptr<SDL_Surface>(c, SDL_FreeSurface);
+                failed = c == nullptr;
+                if (c != nullptr) {
+                    copy = std::shared_ptr<SDL_Surface>(c, SDL_FreeSurface);
+                }
             }
             e.Src = copy.get();
             e.Keep = copy;
         }
         // Kopie fehlgeschlagen: Eintraege ohne Quelle verwerfen
         list.erase(std::remove_if(list.begin(), list.end(), [](const SB_HdEntry &e) { return e.Src == nullptr; }), list.end());
-    });
-    for (SDL_Texture *t : own) {
-        if (t != nullptr) {
-            SDL_DestroyTexture(t);
-        }
-    }
+    };
+    ForEachHdList(keep);
+    keep(HdDrawList); // wird evtl. im naechsten Frame weiterverwendet (siehe BuildHdOverlay)
+    // Unterlisten (Kind 3) brauchen ihre Quelle nur fuer die GPU (Textur), nicht fuer die Referenz
 }
 
 // Schwarze Textur, Alpha = 1 - Wert/8 (BlitAlpha multipliziert mit Wert/8), linear gefiltert
@@ -990,12 +1023,27 @@ SDL_Texture *SB_CPrimaryBitmap::GetShadeTexture(SDL_Surface *shade) {
     return tex;
 }
 
-// 1x-Textur einer Bitmap ohne HD-Fassung, Alpha 0 wo der Pixel 0 ist (BlitTrans laesst diese aus)
-SDL_Texture *SB_CPrimaryBitmap::Get1xTexture(SDL_Surface *src) {
-    auto it = Hd1xCache.find(src);
-    if (it != Hd1xCache.end()) {
-        return it->second;
+static SDL_Texture *HdMakeTexture(SDL_Renderer *rd, SDL_Surface *argb) {
+    SDL_Texture *tex = argb != nullptr ? SDL_CreateTextureFromSurface(rd, argb) : nullptr;
+    if (tex != nullptr) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
     }
+    SDL_FreeSurface(argb);
+    return tex;
+}
+
+// 1x-Textur einer Bitmap ohne HD-Fassung, Alpha 0 wo der Pixel 0 ist (BlitTrans laesst diese aus).
+// Aendert sich der Inhalt der Bitmap, wird die Textur neu angelegt.
+SDL_Texture *SB_CPrimaryBitmap::Get1xTexture(SDL_Surface *src) {
+    HdFlat &f = HdFlatCache[src];
+    const Uint64 hash = HdHashSurface(src);
+    if (f.Full != nullptr && f.Hash == hash) {
+        return f.Full;
+    }
+    ForgetHdTexture(f.Full);
+    f.Full = nullptr;
+    f.Hash = hash;
     SDL_Surface *argb = SDL_CreateRGBSurfaceWithFormat(0, src->w, src->h, 32, SDL_PIXELFORMAT_ARGB8888);
     if (argb == nullptr) {
         return nullptr;
@@ -1010,14 +1058,80 @@ SDL_Texture *SB_CPrimaryBitmap::Get1xTexture(SDL_Surface *src) {
     }
     SDL_UnlockSurface(src);
     HdBleedColors(argb, 1);
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, argb);
-    SDL_FreeSurface(argb);
-    if (tex != nullptr) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        Hd1xCache[src] = tex;
+    f.Full = HdMakeTexture(lpDD, argb);
+    return f.Full;
+}
+
+// Sprechblase (BlitWhiteTrans): White-Schicht = Pixel mit Farbe white und Stellen unter HD-Zeichen,
+// Rest = alle anderen deckenden Pixel (Rahmen, 1x-Text). Unter HD-Zeichen liegt in der Blase Weiss.
+SB_CPrimaryBitmap::HdFlat *SB_CPrimaryBitmap::GetWhiteTextures(SDL_Surface *src, Uint16 white, const std::vector<SB_HdEntry> *sub) {
+    HdFlat &f = HdFlatCache[src];
+    Uint64 hash = HdHashSurface(src) ^ (Uint64(white) * 0x9E3779B97F4A7C15ULL);
+    if (sub != nullptr) {
+        for (const SB_HdEntry &e : *sub) {
+            if (e.Glyph) {
+                hash = (hash ^ Uint64(Uint32(e.Dst.x) | (Uint64(Uint32(e.Dst.y)) << 32))) * 1099511628211ULL;
+            }
+        }
     }
-    return tex;
+    if (f.White != nullptr && f.Rest != nullptr && f.WhiteHash == hash) {
+        return &f;
+    }
+    ForgetHdTexture(f.White);
+    ForgetHdTexture(f.Rest);
+    f.White = f.Rest = nullptr;
+    f.WhiteHash = hash;
+
+    // Abdeckung der HD-Zeichen in 1x (Quellkoordinaten)
+    std::vector<Uint8> glyph(size_t(src->w) * size_t(src->h), 0);
+    if (sub != nullptr) {
+        for (const SB_HdEntry &e : *sub) {
+            if (!e.Glyph || e.Src == nullptr || e.Src->format->BytesPerPixel != 2) {
+                continue;
+            }
+            SDL_Rect area;
+            const SDL_Rect bounds{0, 0, src->w, src->h};
+            SDL_Rect vis;
+            if (SDL_IntersectRect(&e.Dst, &e.Clip, &vis) == SDL_FALSE || SDL_IntersectRect(&vis, &bounds, &area) == SDL_FALSE) {
+                continue;
+            }
+            SDL_LockSurface(e.Src);
+            for (SLONG y = area.y; y < area.y + area.h; y++) {
+                const auto *row = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(e.Src->pixels) + (e.SrcRect.y + y - e.Dst.y) * e.Src->pitch);
+                for (SLONG x = area.x; x < area.x + area.w; x++) {
+                    if (row[e.SrcRect.x + x - e.Dst.x] != 0) {
+                        glyph[size_t(y) * src->w + x] = 1;
+                    }
+                }
+            }
+            SDL_UnlockSurface(e.Src);
+        }
+    }
+    SDL_Surface *w = SDL_CreateRGBSurfaceWithFormat(0, src->w, src->h, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface *r = SDL_CreateRGBSurfaceWithFormat(0, src->w, src->h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (w == nullptr || r == nullptr) {
+        SDL_FreeSurface(w);
+        SDL_FreeSurface(r);
+        return nullptr;
+    }
+    const Uint32 whiteArgb = Rgb565ToArgb(white);
+    SDL_LockSurface(src);
+    for (SLONG y = 0; y < src->h; y++) {
+        const auto *s = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(src->pixels) + y * src->pitch);
+        auto *dw = reinterpret_cast<Uint32 *>(static_cast<Uint8 *>(w->pixels) + y * w->pitch);
+        auto *dr = reinterpret_cast<Uint32 *>(static_cast<Uint8 *>(r->pixels) + y * r->pitch);
+        for (SLONG x = 0; x < src->w; x++) {
+            const bool g = glyph[size_t(y) * src->w + x] != 0;
+            const bool isWhite = s[x] == white || (g && s[x] != 0);
+            dw[x] = isWhite ? whiteArgb : (whiteArgb & 0x00FFFFFF);
+            dr[x] = (s[x] != 0 && !isWhite) ? Rgb565ToArgb(s[x]) : 0;
+        }
+    }
+    SDL_UnlockSurface(src);
+    HdBleedColors(r, 1);
+    f.White = HdMakeTexture(lpDD, w);
+    f.Rest = HdMakeTexture(lpDD, r);
+    return (f.White != nullptr && f.Rest != nullptr) ? &f : nullptr;
 }
 
 std::vector<SB_HdEntry> *SB_CPrimaryBitmap::HdListOf(SB_CBitmapCore *core, bool create) {
@@ -1127,7 +1241,8 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
 }
 
 // Blit aus einer Textur: Sprite mit HD-Textur oder Zeichen aus einem HD-Glyphenblatt (H7)
-void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
+void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
+                                    bool glyph) {
     SDL_Surface *ts = target->lpDDSurface;
     SDL_Rect sr, dr, area;
     if (ts == nullptr || src == nullptr || tex == nullptr || SB_GetRenderScale() <= 1 || !CanUseHd() || !HdBlitArea(src, ts, srcRect, x, y, sr, dr, area)) {
@@ -1146,6 +1261,7 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     e.Clip = ts->clip_rect;
     e.ColorKey = colorKey;
     e.TexAlpha = HdAlphaTex.count(tex) != 0;
+    e.Glyph = glyph;
     list->push_back(e);
     HdLimit(*list, target == this ? 16384 : 4096);
 }
@@ -1180,6 +1296,21 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
     e.Param = param;
     if (kind == 1) {
         e.Tex = GetShadeTexture(surface);
+    } else if (kind == 3) {
+        // Sprechblase: Weiss-Schicht + deckender Rest; HD-Inhalte der Quelle (Rahmen, Zeichen) als Unterliste
+        if (src->HdList != nullptr && !src->HdList->empty()) {
+            e.Sub = std::make_shared<const std::vector<SB_HdEntry>>(*src->HdList);
+        }
+        if (!HdCompositeOk) {
+            e.Sub.reset(); // ohne Zwischenziel: Rahmen und Zeichen aus der 1x-Schicht
+        }
+        HdFlat *f = GetWhiteTextures(surface, Uint16((param >> 16) & 0xFFFF), e.Sub.get());
+        if (f == nullptr) {
+            return;
+        }
+        e.Tex = f->Rest;
+        e.Tex2 = f->White;
+        e.Tex3 = f->Rest;
     } else {
         if (src->HdTexture != nullptr && !HdStillValid(surface, src->HdHash, src->HdCheck)) {
             src->HdTexture = nullptr;
@@ -1219,8 +1350,23 @@ void SB_CPrimaryBitmap::HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, 
 //--------------------------------------------------------------------------------------------
 void SB_CPrimaryBitmap::BuildHdOverlay() {
     HdThisFrame = false;
+    if (HdBlits.empty() && !HdDrawList.empty() && HdReuseFrames < 600) {
+        // Frame ohne eigene HD-Eintraege (z. B. nicht neu gezeichnet): letzte Liste weiter pruefen,
+        // die Maske zeigt 1x, wo sie nicht mehr passt
+        HdBlits = HdDrawList;
+        HdReuseFrames++;
+        // ohne Eintraege, deren Texturen inzwischen freigegeben wurden
+        const std::unordered_set<const SDL_Texture *> gone(HdGraveyard.begin(), HdGraveyard.end());
+        HdEraseIf(HdBlits, [&gone](const SB_HdEntry &e) { return gone.count(e.Tex) != 0 || gone.count(e.Tex2) != 0 || gone.count(e.Tex3) != 0; });
+    } else if (!HdBlits.empty()) {
+        HdReuseFrames = 0;
+    }
     if (HdBlits.empty()) {
         HdDrawList.clear();
+        for (SDL_Texture *t : HdGraveyard) {
+            SDL_DestroyTexture(t);
+        }
+        HdGraveyard.clear();
         return;
     }
     if (Overlay == nullptr) {
@@ -1291,13 +1437,18 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
     // Flip zeichnet genau diese Liste (auch Present ohne neuen Frame aus der Hauptschleife).
     HdDrawList.swap(HdBlits);
     HdBlits.clear();
+    // Freigegebene Texturen kommen in der neuen Liste nicht mehr vor
+    for (SDL_Texture *t : HdGraveyard) {
+        SDL_DestroyTexture(t);
+    }
+    HdGraveyard.clear();
     CheckHdDip(transparent, full.w * full.h);
 
     HdStatTransparent += transparent;
     HdStatNearMiss += nearMiss;
     HdStatFrameTotal += Uint64(full.w) * Uint64(full.h);
     for (const SB_HdEntry &b : HdDrawList) {
-        (b.Kind == 1 ? HdStatShades : (b.Kind == 2 ? HdStatTrans : HdStatBlits))++;
+        (b.Kind == 1 ? HdStatShades : (b.Kind == 2 ? HdStatTrans : (b.Kind == 3 ? HdStatBubbles : HdStatBlits)))++;
     }
     HdStatTicks += SDL_GetPerformanceCounter() - start;
     HdStatFrames++;
@@ -1341,16 +1492,16 @@ void SB_CPrimaryBitmap::LogHdStats() {
     }
     auto pct = [](Uint64 a, Uint64 b) { return b != 0 ? 100.0 * double(a) / double(b) : 0.0; };
     AT_Log("HD: %.1f %% des Frames durchsichtig, %.1f %% deckend aber nur knapp abweichend (<=1 Stufe), %.1f HD-Blits/Frame, %.1f Schatten/Frame, "
-           "%.1f Transparenz/Frame, Overlay %.2f ms/Frame (%d Frames, %llu Present davon %llu ohne neuen Frame)",
+           "%.1f Transparenz/Frame, %.1f Sprechblasen/Frame, Overlay %.2f ms/Frame (%d Frames, %llu Present davon %llu ohne neuen Frame)",
            pct(HdStatTransparent, HdStatFrameTotal), pct(HdStatNearMiss, HdStatFrameTotal), double(HdStatBlits) / HdStatFrames,
-           double(HdStatShades) / HdStatFrames, double(HdStatTrans) / HdStatFrames,
+           double(HdStatShades) / HdStatFrames, double(HdStatTrans) / HdStatFrames, double(HdStatBubbles) / HdStatFrames,
            1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames, static_cast<unsigned long long>(HdStatPresents),
            static_cast<unsigned long long>(HdStatPresentsOnly));
     if (!HdDebugDir.empty() && HdDipFramesLeft == 0) {
         DumpHdDebug("hd_");
     }
     HdStatTransparent = HdStatNearMiss = HdStatTicks = 0;
-    HdStatBlits = HdStatShades = HdStatTrans = HdStatFrameTotal = 0;
+    HdStatBlits = HdStatShades = HdStatTrans = HdStatBubbles = HdStatFrameTotal = 0;
     HdStatPresents = HdStatPresentsOnly = 0;
     HdStatFrames = 0;
     HdStatLast = now;
@@ -1424,6 +1575,117 @@ SLONG SB_CPrimaryBitmap::Flip() {
     return Present();
 }
 
+SDL_FRect SB_CPrimaryBitmap::HdToTarget(const SDL_Rect &r) const {
+    const float sx = float(TargetSize.x) / float(Size.x);
+    const float sy = float(TargetSize.y) / float(Size.y);
+    return SDL_FRect{float(TargetOffset.x) + float(r.x) * sx, float(TargetOffset.y) + float(r.y) * sy, float(r.w) * sx, float(r.h) * sy};
+}
+
+// Clip-Rechteck nur bei Wechsel setzen, damit SDL die Zeichenaufrufe buendeln kann
+void SB_CPrimaryBitmap::SetHdClip(const SDL_Rect &clip) {
+    if (SDL_RectEquals(&clip, &HdLastClip) == SDL_FALSE) {
+        SDL_RenderSetClipRect(lpDD, &clip);
+        HdLastClip = clip;
+    }
+}
+
+// Zeichnet einen Eintrag auf der GPU; offset verschiebt ihn (Unterlisten), limit beschneidet ihn (logisch)
+void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Rect *limit, bool nested) {
+    SDL_Rect vis{b.Clip.x + offset.x, b.Clip.y + offset.y, b.Clip.w, b.Clip.h};
+    if (limit != nullptr && SDL_IntersectRect(&vis, limit, &vis) == SDL_FALSE) {
+        return;
+    }
+    if (vis.w <= 0 || vis.h <= 0 || b.Tex == nullptr) {
+        return;
+    }
+    const SDL_Rect dstL{b.Dst.x + offset.x, b.Dst.y + offset.y, b.Dst.w, b.Dst.h};
+    const SDL_FRect c = HdToTarget(vis);
+    const SDL_Rect clip{SLONG(c.x), SLONG(c.y), SLONG(c.x + c.w + 0.999F) - SLONG(c.x), SLONG(c.y + c.h + 0.999F) - SLONG(c.y)};
+    SetHdClip(clip);
+    const SLONG ts = b.TexScale;
+    const SDL_Rect src{b.SrcRect.x * ts, b.SrcRect.y * ts, b.SrcRect.w * ts, b.SrcRect.h * ts};
+    const SDL_FRect dst = HdToTarget(dstL);
+
+    if (b.Kind == 3) {
+        if (nested) {
+            return; // keine Sprechblase in der Sprechblase
+        }
+        // Weiss mit seiner Deckkraft ueber das, was darunter liegt
+        SDL_SetTextureBlendMode(b.Tex2, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(b.Tex2, b.Alpha);
+        SDL_RenderCopyF(lpDD, b.Tex2, &src, &dst);
+        bool composed = false;
+        if (b.Sub && !b.Sub->empty() && HdCompositeOk) {
+            int ow = 0, oh = 0;
+            SDL_GetRendererOutputSize(lpDD, &ow, &oh);
+            int tw = 0, th = 0;
+            if (HdScratch != nullptr) {
+                SDL_QueryTexture(HdScratch, nullptr, nullptr, &tw, &th);
+            }
+            if (HdScratch == nullptr || tw != ow || th != oh) {
+                if (HdScratch != nullptr) {
+                    SDL_DestroyTexture(HdScratch);
+                }
+                HdScratch = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, ow, oh);
+                if (HdScratch == nullptr || SDL_SetTextureBlendMode(HdScratch, HdBlendMulAlpha) < 0 || SDL_SetTextureBlendMode(HdScratch, HdBlendPremul) < 0) {
+                    AT_Log("HD: Sprechblasen ohne GPU-Zwischenziel (%s), Rahmen und Text dort in 1x", SDL_GetError());
+                    HdCompositeOk = false;
+                }
+            }
+        }
+        if (b.Sub && !b.Sub->empty() && HdCompositeOk) {
+            // Zwischenziel: 1x-Rest, HD-Rahmen, Maske (nur nicht-weisse Stellen), dann HD-Zeichen darueber
+            SDL_SetRenderTarget(lpDD, HdScratch);
+            HdLastClip = SDL_Rect{-1, -1, -1, -1};
+            SetHdClip(clip);
+            SDL_SetRenderDrawBlendMode(lpDD, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 0);
+            SDL_RenderFillRect(lpDD, &clip);
+            SDL_SetTextureBlendMode(b.Tex3, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(b.Tex3, 255);
+            SDL_RenderCopyF(lpDD, b.Tex3, &src, &dst);
+            const XY so(b.Pos.x - b.SrcRect.x + offset.x, b.Pos.y - b.SrcRect.y + offset.y);
+            for (const SB_HdEntry &e : *b.Sub) {
+                if (!e.Glyph) {
+                    DrawHdEntry(e, so, &vis, true);
+                }
+            }
+            SetHdClip(clip);
+            SDL_SetTextureBlendMode(b.Tex3, HdBlendMulAlpha);
+            SDL_RenderCopyF(lpDD, b.Tex3, &src, &dst);
+            for (const SB_HdEntry &e : *b.Sub) {
+                if (e.Glyph) {
+                    DrawHdEntry(e, so, &vis, true);
+                }
+            }
+            SDL_SetRenderTarget(lpDD, nullptr);
+            HdLastClip = SDL_Rect{-1, -1, -1, -1};
+            SetHdClip(clip);
+            SDL_SetTextureBlendMode(HdScratch, HdBlendPremul);
+            SDL_RenderCopy(lpDD, HdScratch, &clip, &clip);
+            composed = true;
+        }
+        if (!composed) {
+            SDL_SetTextureBlendMode(b.Tex3, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(b.Tex3, 255);
+            SDL_RenderCopyF(lpDD, b.Tex3, &src, &dst);
+        }
+        return;
+    }
+
+    bool blend = b.ColorKey || b.Alpha != 255;
+    if (!blend && b.TexAlpha) {
+        // Deckender Blit einer Textur mit Alpha: durchsichtige Stellen sind im 1x-Frame schwarz
+        SDL_SetRenderDrawBlendMode(lpDD, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
+        SDL_RenderFillRectF(lpDD, &dst);
+        blend = true;
+    }
+    SDL_SetTextureBlendMode(b.Tex, blend ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
+    SDL_SetTextureAlphaMod(b.Tex, b.Alpha);
+    SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
+}
+
 SLONG SB_CPrimaryBitmap::Present() {
     if (lpDD != nullptr) {
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
@@ -1437,35 +1699,12 @@ SLONG SB_CPrimaryBitmap::Present() {
         const SDL_Rect target = SDL_Rect{TargetOffset.x, TargetOffset.y, TargetSize.x, TargetSize.y};
         if (HdThisFrame) {
             // GPU-Ebenen: 1x-Frame als Basis, HD-Eintraege; darueber der 1x-Frame mit Differenzmaske
-            const float sx = float(TargetSize.x) / float(Size.x);
-            const float sy = float(TargetSize.y) / float(Size.y);
             const SDL_FRect full{float(TargetOffset.x), float(TargetOffset.y), float(TargetSize.x), float(TargetSize.y)};
-            auto toTarget = [&](const SDL_Rect &r) {
-                return SDL_FRect{float(TargetOffset.x) + float(r.x) * sx, float(TargetOffset.y) + float(r.y) * sy, float(r.w) * sx, float(r.h) * sy};
-            };
             // Basis: 1x-Frame, damit unter weichen HD-Raendern nie Schwarz durchscheint
             SDL_RenderCopyF(lpDD, lpTexture, nullptr, &full);
-            SDL_Rect lastClip{-1, -1, -1, -1};
+            HdLastClip = SDL_Rect{-1, -1, -1, -1};
             for (const SB_HdEntry &b : HdDrawList) {
-                const SDL_FRect c = toTarget(b.Clip);
-                const SDL_Rect clip{SLONG(c.x), SLONG(c.y), SLONG(c.x + c.w + 0.999F) - SLONG(c.x), SLONG(c.y + c.h + 0.999F) - SLONG(c.y)};
-                if (SDL_RectEquals(&clip, &lastClip) == SDL_FALSE) {
-                    SDL_RenderSetClipRect(lpDD, &clip); // nur bei Wechsel, damit SDL die Zeichenaufrufe buendeln kann
-                    lastClip = clip;
-                }
-                const SLONG ts = b.TexScale;
-                const SDL_Rect src{b.SrcRect.x * ts, b.SrcRect.y * ts, b.SrcRect.w * ts, b.SrcRect.h * ts};
-                const SDL_FRect dst = toTarget(b.Dst);
-                bool blend = b.ColorKey || b.Alpha != 255;
-                if (!blend && b.TexAlpha) {
-                    // Deckender Blit einer Textur mit Alpha: durchsichtige Stellen sind im 1x-Frame schwarz
-                    SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
-                    SDL_RenderFillRectF(lpDD, &dst);
-                    blend = true;
-                }
-                SDL_SetTextureBlendMode(b.Tex, blend ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
-                SDL_SetTextureAlphaMod(b.Tex, b.Alpha);
-                SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
+                DrawHdEntry(b, XY(0, 0), nullptr, false);
             }
             SDL_RenderSetClipRect(lpDD, nullptr);
             if (SDL_RenderCopyF(lpDD, Overlay, nullptr, &full) < 0) {
@@ -1517,6 +1756,20 @@ SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned sh
             return -1;
         }
         gHdPrimary = this;
+        // Sprechblasen (H8) brauchen ein Zwischenziel und eigene Blend-Modi
+        HdBlendMulAlpha = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD, SDL_BLENDFACTOR_ZERO,
+                                                     SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+        HdBlendPremul = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD, SDL_BLENDFACTOR_ONE,
+                                                   SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+        SDL_Texture *probe = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, 4, 4);
+        HdCompositeOk = probe != nullptr && SDL_SetTextureBlendMode(probe, HdBlendMulAlpha) == 0 && SDL_SetTextureBlendMode(probe, HdBlendPremul) == 0;
+        if (probe != nullptr) {
+            SDL_DestroyTexture(probe);
+        }
+        if (!HdCompositeOk) {
+            AT_Log("HD: Renderer ohne Zwischenziel/eigene Blend-Modi, Rahmen und Text in Sprechblasen bleiben 1x");
+        }
+        SDL_ClearError();
     } else {
         AT_Log("Falling back to software presentation");
         AT_Log("Reason for fallback: %s", SDL_GetError());
@@ -1550,10 +1803,22 @@ ULONG SB_CPrimaryBitmap::Release() {
         SDL_DestroyTexture(t.second);
     }
     HdShadeCache.clear();
-    for (auto &t : Hd1xCache) {
-        SDL_DestroyTexture(t.second);
+    for (auto &t : HdFlatCache) {
+        for (SDL_Texture *tex : {t.second.Full, t.second.White, t.second.Rest}) {
+            if (tex != nullptr) {
+                SDL_DestroyTexture(tex);
+            }
+        }
     }
-    Hd1xCache.clear();
+    HdFlatCache.clear();
+    for (SDL_Texture *t : HdGraveyard) {
+        SDL_DestroyTexture(t);
+    }
+    HdGraveyard.clear();
+    if (HdScratch != nullptr) {
+        SDL_DestroyTexture(HdScratch);
+        HdScratch = nullptr;
+    }
     for (SB_CBitmapCore *core : HdTracked) {
         delete core->HdList;
         core->HdList = nullptr;

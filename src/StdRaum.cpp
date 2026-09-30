@@ -553,8 +553,7 @@ void CStdRaum::UpdateHdBackground(__int64 graficId) {
 
 void CStdRaum::ReleaseHdBackground() {
     if (HdPicTexture != nullptr) {
-        PrimaryBm.PrimaryBm.ForgetHdTexture(HdPicTexture);
-        SDL_DestroyTexture(HdPicTexture);
+        PrimaryBm.PrimaryBm.ForgetHdTexture(HdPicTexture); // gibt sie nach dem naechsten Frame frei
         HdPicTexture = nullptr;
     }
     if (HdRefSurface != nullptr) {

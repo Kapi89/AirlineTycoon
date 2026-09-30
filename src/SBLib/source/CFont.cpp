@@ -6,6 +6,7 @@
 #include <SDL_image.h>
 
 #include <cctype>
+#include <map>
 #include <string>
 #include <system_error>
 
@@ -84,12 +85,29 @@ static SDL_Surface *RepackGlyphs(SDL_Surface *tall, SLONG cellW, SLONG cellH, SL
     return grid;
 }
 
-void SB_CFont::ReleaseHd() {
-    if (HdSurface != nullptr) {
-        SB_ForgetHdSurface(HdSurface); // gibt die Textur frei und verwirft Eintraege mit ihr
-        SDL_FreeSurface(HdSurface);
-        HdSurface = nullptr;
+// HD-Glyphenblaetter je Datei, einmal geladen und von allen Schrift-Objekten geteilt. Manche Schriften
+// werden bei jedem Zeichnen neu angelegt (z. B. Kontoauszug); ihre HD-Zeichen bleiben so gueltig.
+static std::map<std::string, SDL_Surface *> gFontHdCache;
+
+static SDL_Surface *SharedFontHd(const std::string &relPath, const SDL_Surface *sheet, SLONG cellW, SLONG cellH, SLONG count) {
+    auto it = gFontHdCache.find(relPath);
+    if (it != gFontHdCache.end()) {
+        return it->second;
     }
+    const SLONG s = SB_GetRenderScale();
+    SDL_Surface *hd = RepackGlyphs(LoadFontHd(relPath, sheet), cellW * s, cellH * s, count, s);
+    if (s > 1) {
+        gFontHdCache[relPath] = hd; // auch nullptr: nicht bei jedem Laden erneut suchen
+    }
+    return hd;
+}
+
+void SB_CFont::ReleaseHd() {
+    // HD-Blatt und Textur gehoeren dem Cache; Eintraege mit dem 1x-Blatt als Quelle bekommen eine Kopie
+    if (Surface != nullptr) {
+        SB_KeepHdSource(Surface);
+    }
+    HdSurface = nullptr;
     HdTexture = nullptr;
     HdTried = false;
 }
@@ -160,10 +178,8 @@ bool SB_CFont::Load(SDL_Renderer * /*renderer*/, const char *path, struct HPALET
     SDL_SetColorKey(Surface, SDL_TRUE, 0);
     SDL_FreeSurface(surf);
     HdPath = FontHdPath(path);
-    HdSurface = LoadFontHd(HdPath, Surface);
-    const SLONG s = SB_GetRenderScale();
+    HdSurface = SharedFontHd(HdPath, Surface, Header.Width, Header.Height, chars);
     Surface = RepackGlyphs(Surface, Header.Width, Header.Height, chars, 1);
-    HdSurface = RepackGlyphs(HdSurface, Header.Width * s, Header.Height * s, chars, s);
     delete[] colors;
     delete[] pixels;
     SDL_RWclose(file);

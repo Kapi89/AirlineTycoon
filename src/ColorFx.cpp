@@ -487,44 +487,22 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *SrcBitmap, SLONG Step2, S
 //--------------------------------------------------------------------------------------------
 void SB_CColorFX::BlitWhiteTrans(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos, const CRect *SrcRect,
                                  SLONG Grade) {
-    SLONG cx = 0;
-    SLONG cy = 0;
-    UWORD *p = nullptr;
-    UWORD *pp = nullptr;
-    static UWORD *Table1 = BlendTables.getData() + (2 << 9);
-    static UWORD *Table2 = BlendTables.getData() + (6 << 9);
-    static SLONG sizex;
-    BUFFER_V<UWORD> PixelBuffer(640);
-
-    IsPaintingTextBubble = TRUE;
-
-    // DDSURFACEDESC DDSurfaceDesc;
-    BOOL bVgaRam = FALSE;
-
-    // ZeroMemory (&DDSurfaceDesc, sizeof (DDSurfaceDesc));
-
-    // DDSurfaceDesc.dwSize  = sizeof (DDSurfaceDesc);
-    // DDSurfaceDesc.dwFlags = DDSD_CAPS;
-
-    // TgtBitmap->GetSurface()->GetSurfaceDesc (&DDSurfaceDesc);
-
-    // bVgaRam = ((DDSurfaceDesc.ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY)!=0);
+    // Mischtabellen bleiben wie frueher ueber Aufrufe hinweg erhalten (Grade -1: letzte Einstellung)
+    static SLONG Table1Index = 2;
+    static SLONG Table2Index = 6;
 
     if (Grade != -1) {
-        Table1 = BlendTables.getData() + (Grade << 9);
-        Table2 = BlendTables.getData() + ((AnzSteps - Grade - 1) << 9);
+        Table1Index = Grade;
+        Table2Index = AnzSteps - Grade - 1;
     }
 
-    XY t = TargetPos;
-
-    static UWORD White;
-    CRect Rect;
-
+    UWORD White = 0;
     {
         SB_CBitmapKey Key(*XBubbleBms[9].pBitmap);
         White = *static_cast<UWORD *>(Key.Bitmap);
     }
 
+    CRect Rect;
     if (SrcRect != nullptr) {
         Rect = *SrcRect;
     } else if (SrcBitmap != nullptr) {
@@ -533,87 +511,94 @@ void SB_CColorFX::BlitWhiteTrans(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtB
         return;
     }
 
-    if (t.x < 0) {
-        Rect.left -= t.x;
-        t.x = 0;
-    }
-    if (t.y < 0) {
-        Rect.top -= t.y;
-        t.y = 0;
-    }
-    if (t.x + Rect.right - Rect.left + 1 >= TgtBitmap->GetXSize()) {
-        Rect.right -= (t.x + Rect.right - Rect.left + 1) - TgtBitmap->GetXSize();
-    }
-    if (t.y + Rect.bottom - Rect.top + 1 >= TgtBitmap->GetYSize()) {
-        Rect.bottom -= (t.y + Rect.bottom - Rect.top + 1) - TgtBitmap->GetYSize();
-    }
-
-    SB_CBitmapKey Key(*TgtBitmap);
-    SB_CBitmapKey Key2(*SrcBitmap);
-    if (Key.Bitmap == nullptr || Key2.Bitmap == nullptr) {
-        IsPaintingTextBubble = FALSE;
-        return;
-    }
-
-    sizex = Rect.right - Rect.left + 1;
-
-    if (sizex > 0 && sizex <= 640) {
+    IsPaintingTextBubble = TRUE;
+    // BlitWhiteTrans clippt an der Groesse des Ziels, nicht am Clip-Rechteck
+    const SDL_Rect clip{0, 0, TgtBitmap->GetXSize(), TgtBitmap->GetYSize()};
+    {
         /* No message pump in here any more. It used to run one every 16 lines while both bitmaps
            were locked. A click handled in there could close or rebuild the text bubble, which
            freed the bitmap being copied from, and the locks were then released on a surface that
            was gone - a segfault when quickly clicking through dialog options. The caller pumps
            right after painting (CStdRaum::PostPaint()), where nothing is locked. */
-        for (cy = 0; cy < Rect.bottom - Rect.top + 1; cy++) {
-            p =reinterpret_cast<UWORD *>((static_cast<char *>(Key.Bitmap)) + t.x * 2 + (cy + t.y) * Key.lPitch);
-            pp = reinterpret_cast<UWORD *>((static_cast<char *>(Key2.Bitmap)) + Rect.left * 2 + (cy + Rect.top) * Key2.lPitch);
-
-            if (bVgaRam != 0) {
-                memcpy(PixelBuffer.getData(), p, sizex * 2);
-                p = PixelBuffer.getData();
-            }
-
-            if (Table1 == Table2) {
-                for (cx = sizex; cx > 0; cx--) {
-                    if (*pp != 0U) {
-                        if (*pp == static_cast<UWORD>(static_cast<SLONG>(White))) {
-                            UWORD vga = *p;
-
-                            *p = UWORD(Table1[vga & 255] + Table1[256 + (vga >> 8)] + Table1[(reinterpret_cast<UBYTE *>(pp))[0]] +
-                                       Table1[256 + (reinterpret_cast<UBYTE *>(pp))[1]]);
-                        } else {
-                            *p = *pp;
-                        }
-                    }
-
-                    p++;
-                    pp++;
-                }
-            } else {
-                for (cx = sizex; cx > 0; cx--) {
-                    if (*pp != 0U) {
-                        if (*pp == static_cast<UWORD>(static_cast<SLONG>(White))) {
-                            *p = UWORD(Table1[(reinterpret_cast<UBYTE *>(p))[0]] + Table1[256 + (reinterpret_cast<UBYTE *>(p))[1]] +
-                                       Table2[(reinterpret_cast<UBYTE *>(pp))[0]] + Table2[256 + (reinterpret_cast<UBYTE *>(pp))[1]]);
-                        } else {
-                            *p = *pp;
-                        }
-                    }
-
-                    p++;
-                    pp++;
-                }
-            }
-
-            if (bVgaRam != 0) {
-                memcpy(((static_cast<char *>(Key.Bitmap)) + t.x * 2 + (cy + t.y) * Key.lPitch), PixelBuffer.getData(), sizex * 2);
-            }
+        SB_CBitmapKey Key(*TgtBitmap);
+        SB_CBitmapKey Key2(*SrcBitmap);
+        if (Key.Bitmap == nullptr || Key2.Bitmap == nullptr) {
+            IsPaintingTextBubble = FALSE;
+            return;
         }
+        WhiteRows(Key.Bitmap, Key.lPitch, clip, Key2.Bitmap, Key2.lPitch, Rect, TargetPos, Table1Index, Table2Index, White);
+    }
+    IsPaintingTextBubble = FALSE;
+
+    // HD (Phase 2, H8): Weiss mit Deckkraft Table2/(Schritte-1) mischen, den Rest (Rahmen, Text) deckend
+    const auto alpha = Uint8(std::min(SLONG(255), std::max(SLONG(0), Table2Index * 255 / std::max(SLONG(1), AnzSteps - 1))));
+    const SDL_Rect hdSrc{Rect.left, Rect.top, Rect.right - Rect.left + 1, Rect.bottom - Rect.top + 1};
+    const SLONG param = (Table1Index & 0xFF) | ((Table2Index & 0xFF) << 8) | (SLONG(White) << 16);
+    SB_RecordHdEffect(TgtBitmap, SrcBitmap, hdSrc, TargetPos, clip, 3, alpha, param, &SB_CColorFX::ReplayWhite, this);
+}
+
+//--------------------------------------------------------------------------------------------
+// Kern von BlitWhiteTrans: Quellpixel White werden gemischt (Ziel*Table1 + Quelle*Table2),
+// andere Quellpixel ausser 0 deckend kopiert. SrcRect rechts/unten inklusive.
+//--------------------------------------------------------------------------------------------
+void SB_CColorFX::WhiteRows(void *tgt, SLONG tgtPitch, const SDL_Rect &clip, const void *src, SLONG srcPitch, const CRect &SrcRect, const XY &TargetPos,
+                            SLONG Table1Index, SLONG Table2Index, UWORD White) const {
+    const UWORD *Table1 = BlendTables.getData() + (Table1Index << 9);
+    const UWORD *Table2 = BlendTables.getData() + (Table2Index << 9);
+
+    XY t = TargetPos;
+    CRect Rect = SrcRect;
+    const SLONG right = clip.x + clip.w;
+    const SLONG bottom = clip.y + clip.h;
+
+    if (t.x < clip.x) {
+        Rect.left += clip.x - t.x;
+        t.x = clip.x;
+    }
+    if (t.y < clip.y) {
+        Rect.top += clip.y - t.y;
+        t.y = clip.y;
+    }
+    if (t.x + Rect.right - Rect.left + 1 >= right) {
+        Rect.right -= (t.x + Rect.right - Rect.left + 1) - right;
+    }
+    if (t.y + Rect.bottom - Rect.top + 1 >= bottom) {
+        Rect.bottom -= (t.y + Rect.bottom - Rect.top + 1) - bottom;
     }
 
-    // delete Key;
-    // delete Key2;
+    const SLONG sizex = Rect.right - Rect.left + 1;
+    if (sizex <= 0 || sizex > 640) {
+        return;
+    }
+    for (SLONG cy = 0; cy < Rect.bottom - Rect.top + 1; cy++) {
+        auto *p = reinterpret_cast<UWORD *>(static_cast<char *>(tgt) + t.x * 2 + (cy + t.y) * tgtPitch);
+        const auto *pp = reinterpret_cast<const UWORD *>(static_cast<const char *>(src) + Rect.left * 2 + (cy + Rect.top) * srcPitch);
 
-    IsPaintingTextBubble = FALSE;
+        for (SLONG cx = sizex; cx > 0; cx--) {
+            if (*pp != 0U) {
+                if (*pp == White) {
+                    const UWORD vga = *p;
+                    *p = UWORD(Table1[vga & 255] + Table1[256 + (vga >> 8)] + Table2[(reinterpret_cast<const UBYTE *>(pp))[0]] +
+                               Table2[256 + (reinterpret_cast<const UBYTE *>(pp))[1]]);
+                } else {
+                    *p = *pp;
+                }
+            }
+            p++;
+            pp++;
+        }
+    }
+}
+
+void SB_CColorFX::ReplayWhite(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param,
+                              const void *ctx) {
+    const auto *fx = static_cast<const SB_CColorFX *>(ctx);
+    const CRect rect(srcRect.x, srcRect.y, srcRect.x + srcRect.w - 1, srcRect.y + srcRect.h - 1);
+    SDL_LockSurface(target);
+    SDL_LockSurface(src);
+    fx->WhiteRows(target->pixels, target->pitch, clip, src->pixels, src->pitch, rect, pos, param & 0xFF, (param >> 8) & 0xFF, UWORD((param >> 16) & 0xFFFF));
+    SDL_UnlockSurface(src);
+    SDL_UnlockSurface(target);
 }
 
 //--------------------------------------------------------------------------------------------
