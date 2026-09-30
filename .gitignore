@@ -41,3 +41,6 @@ hd_debug/
 hd_assets/
 assets_export/
 upscaled/
+
+# Python
+__pycache__/
