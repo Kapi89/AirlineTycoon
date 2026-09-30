@@ -521,7 +521,8 @@ void CStdRaum::ProcessEvent(const SDL_Event &event, const CPoint &position) {
 
 //--------------------------------------------------------------------------------------------
 // HD-Hintergrund (Phase 2): gibt es zum Hintergrund eine HD-Datei in s-facher Groesse,
-// wird sie als GPU-Textur hinter den 1x-Frame gelegt (siehe SB_CPrimaryBitmap::SetHdBackground)
+// wird sie der Basiseintrag von PicBitmap (siehe SB_CPrimaryBitmap::SetHdBase). Alles, was ueber
+// RoomBm in den Frame gelangt, nimmt diesen Eintrag mit.
 //--------------------------------------------------------------------------------------------
 void CStdRaum::UpdateHdBackground(__int64 graficId) {
     ReleaseHdBackground();
@@ -546,6 +547,7 @@ void CStdRaum::UpdateHdBackground(__int64 graficId) {
     }
     SDL_UnlockSurface(pic);
     HdPicTexture = PrimaryBm.PrimaryBm.CreateHdTexture(hd);
+    PrimaryBm.PrimaryBm.SetHdBase(PicBitmap.pBitmap, HdPicTexture, HdRefSurface);
 }
 
 void CStdRaum::ReleaseHdBackground() {
@@ -3580,14 +3582,7 @@ void CStdRaum::OnPaint(BOOL /*bHandyDialog*/) {
         CurrentTipType = TIP_NONE;
 
         if (PicBitmap.Size.x != 0) {
-            RoomBm.BlitFrom(PicBitmap, WinP1.x, WinP1.y);
-
-            // HD-Hintergrund anmelden; RoomBm landet unten bei (0,0) im Primaerpuffer.
-            // Nur der Raum, in dem der Spieler steht, nicht z. B. ein Handy-Dialog.
-            if (HdPicTexture != nullptr && HdRefSurface != nullptr && PlayerNum >= 0 && Sim.Players.Players[PlayerNum].LocationWin == this) {
-                const SDL_Rect rect{WinP1.x, WinP1.y, PicBitmap.Size.x, PicBitmap.Size.y};
-                PrimaryBm.PrimaryBm.SetHdBackground(HdPicTexture, rect, HdRefSurface);
-            }
+            RoomBm.BlitFrom(PicBitmap, WinP1.x, WinP1.y); // nimmt den HD-Hintergrund als Eintrag mit (H6)
         }
 
         if (bHandy != 0) // Handy einblendung?
