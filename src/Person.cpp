@@ -445,7 +445,7 @@ void CLAN::BlitLargeAt(SBBM &Offscreen, SLONG Dir, SLONG Phase, XY ScreenPos) {
                 }
 
                 if (DestRect.h > 0 && DestRect.w > 0) {
-                    SDL_BlitScaled(pbm->pBitmap->GetSurface(), &SrcRect, Offscreen.pBitmap->GetSurface(), &DestRect);
+                    pbm->pBitmap->BlitScaled(Offscreen.pBitmap, SrcRect, DestRect);
                 }
             }
         } else if (pbm->pHLObj != nullptr) {

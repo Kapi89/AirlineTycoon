@@ -146,6 +146,7 @@ struct SB_HdEntry {
     SDL_Texture *Tex2{nullptr};        // Kind 3: Weiss-Schicht (Alpha = Deckkraft)
     SDL_Texture *Tex3{nullptr};        // Kind 3: deckender Rest in 1x, Alpha = Maske fuer die HD-Inhalte
     std::shared_ptr<const std::vector<SB_HdEntry>> Sub; // Kind 3: HD-Inhalte der Quelle (in Quellkoordinaten)
+    class SB_CBitmapCore *Core{nullptr}; // Bitmap der Quelle (solange sie lebt), um Bemalen zu erkennen
     SB_HdEffectReplay Replay{nullptr};
     const void *Ctx{nullptr};
     XY Pos;
@@ -178,6 +179,7 @@ class SB_CBitmapCore {
     ULONG BlitChar(SDL_Surface *, SLONG, SLONG, const SDL_Rect &, SDL_Texture *hd = nullptr); // hd: HD-Glyphenblatt (H7)
     ULONG Blit(class SB_CBitmapCore *, SLONG, SLONG);
     ULONG Blit(class SB_CBitmapCore *, SLONG, SLONG, const CRect &);
+    ULONG BlitScaled(class SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect); // wie SDL_BlitScaled, mit HD
     SLONG BlitA(class SB_CBitmapCore *, SLONG, SLONG, const RECT *, SB_Hardwarecolor);
     SLONG BlitA(class SB_CBitmapCore *, SLONG, SLONG, const RECT *);
     SLONG BlitAT(class SB_CBitmapCore *, SLONG, SLONG, const RECT *, SB_Hardwarecolor);
@@ -318,7 +320,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
-                     bool glyph = false);
+                     bool glyph = false, SB_CBitmapCore *core = nullptr);
+    void RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect, bool colorKey);
     void KeepHdSource(SDL_Surface *src);
     void RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                         SLONG param, SB_HdEffectReplay replay, const void *ctx);
@@ -332,6 +335,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void LogHdStats();
     void DumpHdDebug(const std::string &prefix, const std::string &dir = std::string());
     SLONG BuildHdRef(const std::vector<SB_HdEntry> &list, SDL_Surface *ref, std::vector<Uint32> &mask, SLONG *nearMiss);
+    bool HdCoreStillValid(SB_CBitmapCore *core);
     void SaveRendererPng(const std::string &file);
     void CheckHdDip(SLONG transparent, SLONG total);
     std::vector<SB_HdEntry> *HdListOf(SB_CBitmapCore *core, bool create);
