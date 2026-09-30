@@ -141,7 +141,11 @@ struct SB_HdEntry {
     bool ColorKey{false};              // Blit mit Colorkey (sonst deckend)
     bool TexAlpha{false};              // Textur hat durchsichtige Stellen
     Uint8 Alpha{255};                  // Deckkraft auf der GPU (BlitTrans)
-    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz
+    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans)
+    bool Glyph{false};                 // Zeichen aus einem HD-Glyphenblatt (H7)
+    SDL_Texture *Tex2{nullptr};        // Kind 3: Weiss-Schicht (Alpha = Deckkraft)
+    SDL_Texture *Tex3{nullptr};        // Kind 3: deckender Rest in 1x, Alpha = Maske fuer die HD-Inhalte
+    std::shared_ptr<const std::vector<SB_HdEntry>> Sub; // Kind 3: HD-Inhalte der Quelle (in Quellkoordinaten)
     SB_HdEffectReplay Replay{nullptr};
     const void *Ctx{nullptr};
     XY Pos;
@@ -268,6 +272,8 @@ void SB_ForgetHdSurface(const SDL_Surface *hd);
 // Liste fehlender HD-Grafiken (OptionHdMissingLog): Jeder GLI-Chunk, der ohne s-fache PNG gezeichnet
 // wird, erscheint einmal im Log mit Raum, Pfad und Groesse. room ist der Raum, der gerade zeichnet.
 void SB_SetHdMissingLog(bool on);
+// 1x-Surface wird freigegeben (z. B. Glyphenblatt einer Schrift): Eintraege behalten eine eigene Kopie
+void SB_KeepHdSource(SDL_Surface *src);
 void SB_ReportHdMissing(const std::string &path, SLONG w, SLONG h, const char *why); // Groesse in 1x
 // HD-Textur zu einer s-fachen HD-Surface (Cache im Primaerpuffer), nullptr ohne HD-Ebene
 SDL_Texture *SB_GetHdTexture(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
@@ -301,7 +307,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     // Raum-Hintergrund (H2/H6): bm bekommt als einzigen Eintrag die HD-Textur hd mit dem 1x-Original ref1x.
     // Was spaeter auf bm gezeichnet wird, kommt dazu; ueber jede Kette von Offscreens bis in den Frame.
     void SetHdBase(SB_CBitmapCore *bm, SDL_Texture *hd, SDL_Surface *ref1x);
-    void ForgetHdTexture(const SDL_Texture *hd); // Eintraege mit dieser Textur verwerfen (Textur gehoert dem Aufrufer)
+    void ForgetHdTexture(SDL_Texture *hd); // Eintraege mit dieser Textur verwerfen; die Textur wird nach dem naechsten Frame freigegeben
     void SetOverlayLinear(bool linear);
     void SetHdDebugDir(const char *dir); // nicht leer: Frame, Original und Maske regelmaessig als PNG ablegen
 
@@ -310,7 +316,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_Texture *GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
-    void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
+    void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
+                     bool glyph = false);
+    void KeepHdSource(SDL_Surface *src);
     void RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                         SLONG param, SB_HdEffectReplay replay, const void *ctx);
     void HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque);
@@ -324,9 +332,22 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void DumpHdDebug(const std::string &prefix);
     void CheckHdDip(SLONG transparent, SLONG total);
     std::vector<SB_HdEntry> *HdListOf(SB_CBitmapCore *core, bool create);
-    void ForEachHdList(const std::function<void(std::vector<SB_HdEntry> &)> &fn);
+    void ForEachHdList(const std::function<void(std::vector<SB_HdEntry> &)> &fn); // ohne HdDrawList (bleibt bis zum naechsten Frame gueltig)
+    void DestroyHdTextureLater(SDL_Texture *tex);
     SDL_Texture *GetShadeTexture(SDL_Surface *shade);
+    struct HdFlat {                // 1x-Texturen einer Bitmap ohne eigene HD-Fassung (BlitTrans, BlitWhiteTrans)
+        SDL_Texture *Full{nullptr};  // Alpha 0 wo der Pixel 0 ist
+        SDL_Texture *White{nullptr}; // Kind 3: Weiss (und Stellen unter HD-Zeichen)
+        SDL_Texture *Rest{nullptr};  // Kind 3: uebrige deckende Pixel
+        Uint64 Hash{0};
+        Uint64 WhiteHash{0};
+    };
+    std::unordered_map<const SDL_Surface *, HdFlat> HdFlatCache;
     SDL_Texture *Get1xTexture(SDL_Surface *src);
+    HdFlat *GetWhiteTextures(SDL_Surface *src, Uint16 white, const std::vector<SB_HdEntry> *sub);
+    void DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Rect *limit, bool nested);
+    void SetHdClip(const SDL_Rect &clip);
+    SDL_FRect HdToTarget(const SDL_Rect &r) const;
 
     XY TargetSize{};
     XY TargetOffset{0, 0};
@@ -338,14 +359,19 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     bool OverlayLinear{false};
     bool HdThisFrame{false}; // Overlay fuer den aktuellen Frame gebaut
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdShadeCache; // Alpha-Bitmap -> schwarze Textur mit Alpha
-    std::unordered_map<const SDL_Surface *, SDL_Texture *> Hd1xCache;    // 1x-Bitmap -> Textur, Alpha 0 wo Pixel 0 (BlitTrans ohne HD)
     std::vector<SB_HdEntry> HdBlits;    // wird gerade gezeichnet (bis zum naechsten Flip)
     std::vector<SB_HdEntry> HdDrawList; // gehoert zum Frame im Overlay, gilt fuer jedes Present bis zum naechsten Flip
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCache; // HD-Surface -> Textur
     std::unordered_set<const SDL_Texture *> HdAlphaTex;                // Texturen mit durchsichtigen Stellen
     std::unordered_set<SB_CBitmapCore *> HdTracked;                    // Offscreens mit Eintragsliste
     SDL_Surface *HdFullRef{};                                          // Referenz fuer den ganzen Frame
-    Uint64 HdStatBlits{0}, HdStatShades{0}, HdStatTrans{0}, HdStatFrameTotal{0};
+    std::vector<SDL_Texture *> HdGraveyard;                            // freigegebene Texturen, die HdDrawList evtl. noch zeichnet
+    SDL_Texture *HdScratch{};                                          // Zwischenziel fuer Sprechblasen (Kind 3)
+    SDL_BlendMode HdBlendMulAlpha{SDL_BLENDMODE_INVALID}, HdBlendPremul{SDL_BLENDMODE_INVALID};
+    bool HdCompositeOk{true};
+    SDL_Rect HdLastClip{-1, -1, -1, -1};
+    SLONG HdReuseFrames{0};                                            // Frames ohne eigene Eintraege, die die letzte Liste weiterverwenden
+    Uint64 HdStatBlits{0}, HdStatShades{0}, HdStatTrans{0}, HdStatBubbles{0}, HdStatFrameTotal{0};
     Uint64 HdStatPresents{0}, HdStatPresentsOnly{0}; // Present insgesamt / ohne vorheriges Flip
     bool HdFromFlip{false};
     double HdAvgPct{-1.0}; // gleitender Mittelwert "durchsichtig" fuer die Einbruch-Erkennung

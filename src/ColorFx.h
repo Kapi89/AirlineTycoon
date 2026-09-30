@@ -40,6 +40,9 @@ class SB_CColorFX {
     void TransRows(void *tgt, SLONG tgtPitch, const SDL_Rect &clip, const void *src, SLONG srcPitch, const CRect &SrcRect, const XY &TargetPos,
                    SLONG Grade) const;
     static void ReplayTrans(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
+    void WhiteRows(void *tgt, SLONG tgtPitch, const SDL_Rect &clip, const void *src, SLONG srcPitch, const CRect &SrcRect, const XY &TargetPos,
+                   SLONG Table1Index, SLONG Table2Index, UWORD White) const;
+    static void ReplayWhite(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
     void BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos);
     void HighlightText(SB_CBitmapCore *Bitmap, const CRect &Rect, UWORD FontColor, ULONG HighlightColor);
 };
