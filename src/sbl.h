@@ -310,6 +310,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ForgetHdTexture(SDL_Texture *hd); // Eintraege mit dieser Textur verwerfen; die Textur wird nach dem naechsten Frame freigegeben
     void SetOverlayLinear(bool linear);
     void SetHdDebugDir(const char *dir); // nicht leer: Frame, Original und Maske regelmaessig als PNG ablegen
+    void RequestHdDump(const char *dir);  // Diagnose (F11): naechsten Frame mit HD-Ebene, Maske und Bildschirm ablegen
 
     // Zeichenliste (H4/H6): Blits von Bitmaps mit HD-Inhalt werden im Ziel mitgeschrieben (Primaerpuffer
     // oder Offscreen) und auf der GPU in HD nachgezeichnet.
@@ -329,7 +330,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void Delete(void);
     void BuildHdOverlay();
     void LogHdStats();
-    void DumpHdDebug(const std::string &prefix);
+    void DumpHdDebug(const std::string &prefix, const std::string &dir = std::string());
+    SLONG BuildHdRef(const std::vector<SB_HdEntry> &list, SDL_Surface *ref, std::vector<Uint32> &mask, SLONG *nearMiss);
+    void SaveRendererPng(const std::string &file);
     void CheckHdDip(SLONG transparent, SLONG total);
     std::vector<SB_HdEntry> *HdListOf(SB_CBitmapCore *core, bool create);
     void ForEachHdList(const std::function<void(std::vector<SB_HdEntry> &)> &fn); // ohne HdDrawList (bleibt bis zum naechsten Frame gueltig)
@@ -339,6 +342,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
         SDL_Texture *Full{nullptr};  // Alpha 0 wo der Pixel 0 ist
         SDL_Texture *White{nullptr}; // Kind 3: Weiss (und Stellen unter HD-Zeichen)
         SDL_Texture *Rest{nullptr};  // Kind 3: uebrige deckende Pixel
+        SDL_Texture *Mask{nullptr};  // Kind 3: Alpha 1 ausser auf Weiss (schneidet Weiss aus den HD-Rahmen)
         Uint64 Hash{0};
         Uint64 WhiteHash{0};
     };
@@ -370,7 +374,18 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_BlendMode HdBlendMulAlpha{SDL_BLENDMODE_INVALID}, HdBlendPremul{SDL_BLENDMODE_INVALID};
     bool HdCompositeOk{true};
     SDL_Rect HdLastClip{-1, -1, -1, -1};
-    SLONG HdReuseFrames{0};                                            // Frames ohne eigene Eintraege, die die letzte Liste weiterverwenden
+    std::vector<Uint8> HdTouched;                                      // je Pixel: in diesem Frame im Primaerpuffer gezeichnet (H9)
+    void MarkHdTouched(const SDL_Rect &r);
+    bool IsHdTouched(const SDL_Rect &r) const;
+    SDL_Surface *HdFullRef2{};                                         // Referenz fuer den zweiten Versuch (letzte Liste + neue Eintraege)
+    std::vector<Uint32> HdMaskBuf, HdMaskBuf2;                         // Overlay-Pixel beider Versuche
+    double HdLastPct{0.0};                                             // Anteil durchsichtig im gezeigten Frame
+    Uint64 HdFrameNo{0};
+    bool HdDumpRequested{false};
+    std::string HdDumpDir;
+    SLONG HdDumpIndex{0}, HdDumpPresent{0};
+    const char *HdListSource{""};                                      // woher die Liste des gezeigten Frames stammt (Log)
+    Uint64 HdStatAllPresents{0}, HdStatPresentsNoHd{0}, HdStatPresentsLow{0}, HdStatFramesLow{0}, HdStatMerged{0}, HdStatCarried{0}, HdStatFail{0};
     Uint64 HdStatBlits{0}, HdStatShades{0}, HdStatTrans{0}, HdStatBubbles{0}, HdStatFrameTotal{0};
     Uint64 HdStatPresents{0}, HdStatPresentsOnly{0}; // Present insgesamt / ohne vorheriges Flip
     bool HdFromFlip{false};

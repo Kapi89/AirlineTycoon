@@ -533,6 +533,16 @@ void GameFrame::ProcessEvent(const SDL_Event &event) const {
         FrameWnd->OnKeyDown(event.text.text[0], 0, InputFlags::FromTextInput);
         break;
     case SDL_KEYDOWN: {
+        // HD-Diagnose (Phase 2): F11 legt den naechsten Frame mit HD-Ebene, Maske und Bildschirm in hd_debug ab
+        if (event.key.keysym.sym == SDLK_F11 && SB_GetRenderScale() > 1 && Editor == EDITOR_NONE) {
+            if (event.key.repeat == 0) {
+                const fs::path debugDir = fs::path{AppPath.c_str()} / "hd_debug";
+                std::error_code ec;
+                fs::create_directories(debugDir, ec);
+                PrimaryBm.PrimaryBm.RequestHdDump(debugDir.string().c_str());
+            }
+            break;
+        }
         // UINT nFlags = event.key.keysym.scancode | ((SDL_GetModState() & KMOD_LALT) << 5);
         FrameWnd->OnKeyDown(KeycodeToUpper(event.key.keysym.sym), event.key.repeat, InputFlags::None);
     } break;
