@@ -34,6 +34,9 @@ class SB_CColorFX {
     static void BlitOutline(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos, ULONG LineColor);
     void BlitTrans(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos, const CRect *SrcRect = NULL, SLONG Grade = -1);
     void BlitAlpha(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos);
+    // Kern von BlitAlpha auf rohen Pixeln; auch zum Nachspielen auf der HD-Referenz (Phase 2, H5)
+    void AlphaRows(void *tgt, SLONG tgtPitch, SLONG tgtW, SLONG tgtH, const void *src, SLONG srcPitch, SLONG srcW, SLONG srcH, const XY &TargetPos) const;
+    static void ReplayAlpha(SDL_Surface *target, SDL_Surface *shade, XY pos, const void *ctx);
     void BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos);
     void HighlightText(SB_CBitmapCore *Bitmap, const CRect &Rect, UWORD FontColor, ULONG HighlightColor);
 };

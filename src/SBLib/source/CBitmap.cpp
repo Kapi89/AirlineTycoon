@@ -44,6 +44,12 @@ void SB_ForgetHdSurface(const SDL_Surface *hd) {
     }
 }
 
+void SB_RecordHdShade(SB_CBitmapCore *target, SB_CBitmapCore *shade, XY pos, SB_HdShadeReplay replay, const void *ctx) {
+    if (gHdPrimary != nullptr && target == gHdPrimary && shade != nullptr && SB_GetRenderScale() > 1) {
+        gHdPrimary->RecordHdShade(shade, pos, replay, ctx);
+    }
+}
+
 void SB_CBitmapCore::RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
     if (HdTexture != nullptr && gHdPrimary != nullptr && target == gHdPrimary) {
         gHdPrimary->RecordHdBlit(this, srcRect, x, y, colorKey);
@@ -496,8 +502,8 @@ ULONG SB_CBitmapCore::BlitChar(SDL_Surface *font, SLONG x, SLONG y, const SDL_Re
 void SB_CBitmapCore::InitClipRect() { SDL_SetClipRect(lpDDSurface, nullptr); }
 
 ULONG SB_CBitmapCore::Release() {
-    if (HdTexture != nullptr && gHdPrimary != nullptr && lpDDSurface != nullptr) {
-        gHdPrimary->DropHdBlitsFrom(lpDDSurface); // Textur selbst gehoert dem Cache
+    if (gHdPrimary != nullptr && lpDDSurface != nullptr) {
+        gHdPrimary->DropHdBlitsFrom(lpDDSurface); // HD-Textur selbst gehoert dem Cache, Schatten-Textur wird freigegeben
     }
     HdTexture = nullptr;
     if (lpDDSurface != nullptr) {
@@ -711,14 +717,66 @@ void SB_CPrimaryBitmap::ForgetHdSurface(const SDL_Surface *hd) {
 }
 
 void SB_CPrimaryBitmap::DropHdBlitsFrom(const SDL_Surface *src) {
-    HdBlits.erase(std::remove_if(HdBlits.begin(), HdBlits.end(), [src](const HdBlit &b) { return b.Src == src; }), HdBlits.end());
+    auto fromSrc = [src](const HdBlit &b) { return b.Src == src; };
+    HdBlits.erase(std::remove_if(HdBlits.begin(), HdBlits.end(), fromSrc), HdBlits.end());
+    auto it = HdShadeCache.find(src);
+    if (it != HdShadeCache.end()) {
+        // Schatten-Textur gehoert zu dieser Surface: auch aus dem angezeigten Frame nehmen
+        HdDrawList.erase(std::remove_if(HdDrawList.begin(), HdDrawList.end(), fromSrc), HdDrawList.end());
+        SDL_DestroyTexture(it->second);
+        HdShadeCache.erase(it);
+    }
+}
+
+// Schwarze Textur, Alpha = 1 - Wert/8 (BlitAlpha multipliziert mit Wert/8), linear gefiltert
+SDL_Texture *SB_CPrimaryBitmap::GetShadeTexture(SDL_Surface *shade) {
+    auto it = HdShadeCache.find(shade);
+    if (it != HdShadeCache.end()) {
+        return it->second;
+    }
+    SDL_Surface *argb = SDL_CreateRGBSurfaceWithFormat(0, shade->w, shade->h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (argb == nullptr) {
+        return nullptr;
+    }
+    SDL_LockSurface(shade);
+    for (SLONG y = 0; y < shade->h; y++) {
+        const auto *s = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(shade->pixels) + y * shade->pitch);
+        auto *d = reinterpret_cast<Uint32 *>(static_cast<Uint8 *>(argb->pixels) + y * argb->pitch);
+        for (SLONG x = 0; x < shade->w; x++) {
+            const Uint32 v = min(Uint32(s[x]), Uint32(8));
+            d[x] = ((8 - v) * 255 / 8) << 24;
+        }
+    }
+    SDL_UnlockSurface(shade);
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, argb);
+    SDL_FreeSurface(argb);
+    if (tex != nullptr) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        HdShadeCache[shade] = tex;
+    }
+    return tex;
+}
+
+void SB_CPrimaryBitmap::RecordHdShade(SB_CBitmapCore *shade, XY pos, SB_HdShadeReplay replay, const void *ctx) {
+    SDL_Surface *surface = shade->GetSurface();
+    if (surface == nullptr || replay == nullptr || surface->format->BytesPerPixel != 2 || HdBlits.size() >= 8192) {
+        return;
+    }
+    SDL_Texture *tex = GetShadeTexture(surface);
+    if (tex == nullptr) {
+        return;
+    }
+    // BlitAlpha clippt nur an der Puffergroesse (Hoehe hoechstens 440), nicht am Clip-Rechteck
+    const SDL_Rect clip{0, 0, lpDDSurface->w, min(lpDDSurface->h, 440)};
+    HdBlits.push_back(HdBlit{surface, tex, SDL_Rect{0, 0, surface->w, surface->h}, SDL_Rect{pos.x, pos.y, surface->w, surface->h}, clip, true, replay, ctx, pos});
 }
 
 void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
     if (HdBlits.size() >= 8192) {
         return;
     }
-    HdBlits.push_back(HdBlit{src->GetSurface(), src->GetHdTexture(), srcRect, SDL_Rect{x, y, srcRect.w, srcRect.h}, lpDDSurface->clip_rect, colorKey});
+    HdBlits.push_back(HdBlit{src->GetSurface(), src->GetHdTexture(), srcRect, SDL_Rect{x, y, srcRect.w, srcRect.h}, lpDDSurface->clip_rect, colorKey, nullptr, nullptr, XY(0, 0)});
 }
 
 //--------------------------------------------------------------------------------------------
@@ -773,6 +831,11 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
         SDL_BlitSurface(HdRef, &srcRect, HdFullRef, &dst); // HdRef hat keinen Colorkey: 1:1 kopieren
     }
     for (const HdBlit &b : HdBlits) {
+        if (b.Replay != nullptr) {
+            SDL_SetClipRect(HdFullRef, nullptr);
+            b.Replay(HdFullRef, b.Src, b.Pos, b.Ctx); // Abdunkeln wie im Frame
+            continue;
+        }
         SDL_Rect clip = b.Clip;
         SDL_SetClipRect(HdFullRef, &clip);
         SDL_Rect srcRect = b.SrcRect;
@@ -819,7 +882,9 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
     HdStatTransparent += transparent;
     HdStatNearMiss += nearMiss;
     HdStatFrameTotal += Uint64(full.w) * Uint64(full.h);
-    HdStatBlits += HdDrawList.size();
+    for (const HdBlit &b : HdDrawList) {
+        (b.Replay != nullptr ? HdStatShades : HdStatBlits)++;
+    }
     HdStatTicks += SDL_GetPerformanceCounter() - start;
     HdStatFrames++;
     LogHdStats();
@@ -865,16 +930,17 @@ void SB_CPrimaryBitmap::LogHdStats() {
         AT_Log("HD-Hintergrund: %.1f %% des Hintergrunds durchsichtig (Bezug: Hintergrund-Rechteck %dx%d)", pct(HdStatBgTransparent, HdStatTotal),
                HdRect.w, HdRect.h);
     }
-    AT_Log("HD: %.1f %% des Frames durchsichtig, %.1f %% deckend aber nur knapp abweichend (<=1 Stufe), %.1f HD-Blits/Frame, Overlay %.2f ms/Frame "
-           "(%d Frames, %llu Present davon %llu ohne neuen Frame)",
+    AT_Log("HD: %.1f %% des Frames durchsichtig, %.1f %% deckend aber nur knapp abweichend (<=1 Stufe), %.1f HD-Blits/Frame, %.1f Schatten/Frame, "
+           "Overlay %.2f ms/Frame (%d Frames, %llu Present davon %llu ohne neuen Frame)",
            pct(HdStatTransparent, HdStatFrameTotal), pct(HdStatNearMiss, HdStatFrameTotal), double(HdStatBlits) / HdStatFrames,
+           double(HdStatShades) / HdStatFrames,
            1000.0 * double(HdStatTicks) / double(freq) / HdStatFrames, HdStatFrames, static_cast<unsigned long long>(HdStatPresents),
            static_cast<unsigned long long>(HdStatPresentsOnly));
     if (!HdDebugDir.empty() && HdDipFramesLeft == 0) {
         DumpHdDebug("hd_");
     }
     HdStatTransparent = HdStatNearMiss = HdStatTotal = HdStatTicks = 0;
-    HdStatBlits = HdStatBgTransparent = HdStatFrameTotal = 0;
+    HdStatBlits = HdStatShades = HdStatBgTransparent = HdStatFrameTotal = 0;
     HdStatPresents = HdStatPresentsOnly = 0;
     HdStatFrames = 0;
     HdStatLast = now;
@@ -978,7 +1044,8 @@ SLONG SB_CPrimaryBitmap::Present() {
                 const SDL_FRect c = toTarget(b.Clip);
                 const SDL_Rect clip{SLONG(c.x), SLONG(c.y), SLONG(c.x + c.w + 0.999F) - SLONG(c.x), SLONG(c.y + c.h + 0.999F) - SLONG(c.y)};
                 SDL_RenderSetClipRect(lpDD, &clip);
-                const SDL_Rect src{b.SrcRect.x * s, b.SrcRect.y * s, b.SrcRect.w * s, b.SrcRect.h * s};
+                const SLONG ts = b.Replay != nullptr ? 1 : s; // Schatten-Texturen sind 1x, linear gefiltert
+                const SDL_Rect src{b.SrcRect.x * ts, b.SrcRect.y * ts, b.SrcRect.w * ts, b.SrcRect.h * ts};
                 const SDL_FRect dst = toTarget(b.Dst);
                 SDL_SetTextureBlendMode(b.Tex, b.ColorKey ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
                 SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
@@ -1061,6 +1128,10 @@ ULONG SB_CPrimaryBitmap::Release() {
         SDL_DestroyTexture(t.second);
     }
     HdTexCache.clear();
+    for (auto &t : HdShadeCache) {
+        SDL_DestroyTexture(t.second);
+    }
+    HdShadeCache.clear();
     if (HdFullRef != nullptr) {
         SDL_FreeSurface(HdFullRef);
         HdFullRef = nullptr;

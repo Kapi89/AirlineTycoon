@@ -228,6 +228,12 @@ SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const 
 // HD-Texturen fuer GLI-Bitmaps (Phase 2, H4): GfxLib meldet freigegebene HD-Surfaces ab
 void SB_ForgetHdSurface(const SDL_Surface *hd);
 
+// Abdunkeln ueber HD (Phase 2, H5): Wer den Primaerpuffer mit einer Alpha-Bitmap abdunkelt
+// (ColorFX.BlitAlpha), meldet das hier. replay spielt dieselbe Rechnung auf der Referenz nach,
+// die GPU zeichnet Schwarz mit Alpha = 1 - Wert/8 an derselben Stelle.
+using SB_HdShadeReplay = void (*)(SDL_Surface *target, SDL_Surface *shade, XY pos, const void *ctx);
+void SB_RecordHdShade(class SB_CBitmapCore *target, class SB_CBitmapCore *shade, XY pos, SB_HdShadeReplay replay, const void *ctx);
+
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
     SB_CPrimaryBitmap() = default;
@@ -259,6 +265,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void DropHdBlitsFrom(const SDL_Surface *src);
+    void RecordHdShade(SB_CBitmapCore *shade, XY pos, SB_HdShadeReplay replay, const void *ctx);
     bool CanUseHd() const { return lpDD != nullptr && lpTexture != nullptr; }
 
   private:
@@ -288,13 +295,18 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
         SDL_Rect Dst;        // logisch im Frame (ungeclippt)
         SDL_Rect Clip;       // Clip-Rechteck des Primaerpuffers zum Zeitpunkt des Blits
         bool ColorKey;       // Blit mit Colorkey (sonst deckend)
+        SB_HdShadeReplay Replay{nullptr}; // gesetzt: Abdunkeln (H5) statt Blit; Tex ist dann die Schatten-Textur
+        const void *Ctx{nullptr};
+        XY Pos;
     };
+    std::unordered_map<const SDL_Surface *, SDL_Texture *> HdShadeCache; // Alpha-Bitmap -> schwarze Textur mit Alpha
+    SDL_Texture *GetShadeTexture(SDL_Surface *shade);
     std::vector<HdBlit> HdBlits;                              // wird gerade gezeichnet (bis zum naechsten Flip)
     std::vector<HdBlit> HdDrawList;                           // gehoert zum Frame im Overlay, gilt fuer jedes Present bis zum naechsten Flip
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCache; // HD-Surface -> Textur
     SDL_Surface *HdFullRef{};                                 // Referenz fuer den ganzen Frame
     bool HdBgThisFrame{false};
-    Uint64 HdStatBlits{0}, HdStatBgTransparent{0}, HdStatFrameTotal{0};
+    Uint64 HdStatBlits{0}, HdStatShades{0}, HdStatBgTransparent{0}, HdStatFrameTotal{0};
     Uint64 HdStatPresents{0}, HdStatPresentsOnly{0}; // Present insgesamt / ohne vorheriges Flip
     bool HdFromFlip{false};
     double HdAvgPct{-1.0};                                    // gleitender Mittelwert "durchsichtig" fuer die Einbruch-Erkennung
