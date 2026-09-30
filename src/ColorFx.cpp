@@ -929,22 +929,31 @@ void SB_CColorFX::BlitAlpha(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap
     if (TargetPos.x >= 640 || TargetPos.x + SrcBitmap->GetXSize() < 0) {
         return;
     }
-
-    SLONG cx = 0;
-    SLONG cy = 0;
-    UWORD *p = nullptr;
-    UWORD *pp = nullptr;
-    static SLONG sizex;
-    BUFFER_V<UWORD> PixelBuffer(640);
-
-    XY t = TargetPos;
-
     if (SrcBitmap->GetXSize() <= 0 || SrcBitmap->GetXSize() >= 640) {
         DebugBreak();
     }
 
-    CRect Rect;
-    Rect = CRect(0, 0, SrcBitmap->GetXSize() - 1, SrcBitmap->GetYSize() - 1);
+    {
+        SB_CBitmapKey Key(*TgtBitmap);
+        SB_CBitmapKey Key2(*SrcBitmap);
+        if (Key.Bitmap == nullptr || Key2.Bitmap == nullptr) {
+            return;
+        }
+        AlphaRows(Key.Bitmap, Key.lPitch, TgtBitmap->GetXSize(), TgtBitmap->GetYSize(), Key2.Bitmap, Key2.lPitch, SrcBitmap->GetXSize(),
+                  SrcBitmap->GetYSize(), TargetPos);
+    }
+
+    // HD (Phase 2, H5): Abdunkeln auf dem Primaerpuffer auch auf der GPU ueber HD-Inhalten zeichnen
+    SB_RecordHdShade(TgtBitmap, SrcBitmap, TargetPos, &SB_CColorFX::ReplayAlpha, this);
+}
+
+//--------------------------------------------------------------------------------------------
+// Dunkelt tgt mit der Alpha-Bitmap src ab: jeder Pixel wird mit (src-Wert)/Schritte multipliziert
+//--------------------------------------------------------------------------------------------
+void SB_CColorFX::AlphaRows(void *tgt, SLONG tgtPitch, SLONG tgtW, SLONG tgtH, const void *src, SLONG srcPitch, SLONG srcW, SLONG srcH,
+                            const XY &TargetPos) const {
+    XY t = TargetPos;
+    CRect Rect(0, 0, srcW - 1, srcH - 1);
 
     if (t.x < 0) {
         Rect.left -= t.x;
@@ -954,95 +963,37 @@ void SB_CColorFX::BlitAlpha(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap
         Rect.top -= t.y;
         t.y = 0;
     }
-    if (t.x + Rect.right - Rect.left + 1 >= TgtBitmap->GetXSize()) {
-        Rect.right -= (t.x + Rect.right - Rect.left + 1) - TgtBitmap->GetXSize();
+    if (t.x + Rect.right - Rect.left + 1 >= tgtW) {
+        Rect.right -= (t.x + Rect.right - Rect.left + 1) - tgtW;
     }
-    if (t.y + Rect.bottom - Rect.top + 1 >= min(TgtBitmap->GetYSize(), 440)) {
-        Rect.bottom -= (t.y + Rect.bottom - Rect.top + 1) - min(TgtBitmap->GetYSize(), 440);
+    if (t.y + Rect.bottom - Rect.top + 1 >= min(tgtH, 440)) {
+        Rect.bottom -= (t.y + Rect.bottom - Rect.top + 1) - min(tgtH, 440);
     }
 
-    SB_CBitmapKey Key(*TgtBitmap);
-    SB_CBitmapKey Key2(*SrcBitmap);
-    if (Key.Bitmap == nullptr || Key2.Bitmap == nullptr) {
+    const SLONG sizex = Rect.right - Rect.left + 1;
+    if (sizex <= 0) {
         return;
     }
+    for (SLONG cy = 0; cy < Rect.bottom - Rect.top + 1; cy++) {
+        auto *p = reinterpret_cast<UWORD *>(static_cast<char *>(tgt) + t.x * 2 + (cy + t.y) * tgtPitch);
+        const auto *pp = reinterpret_cast<const UWORD *>(static_cast<const char *>(src) + Rect.left * 2 + (cy + Rect.top) * srcPitch);
 
-    sizex = Rect.right - Rect.left + 1;
-
-    if (sizex > 0) {
-        for (cy = 0; cy < Rect.bottom - Rect.top + 1; cy++) {
-            p = reinterpret_cast<UWORD *>((static_cast<char *>(Key.Bitmap)) + t.x * 2 + (cy + t.y) * Key.lPitch);
-            pp = reinterpret_cast<UWORD *>((static_cast<char *>(Key2.Bitmap)) + Rect.left * 2 + (cy + Rect.top) * Key2.lPitch);
-
-            memcpy(PixelBuffer.getData(), p, sizex * 2);
-            p = PixelBuffer.getData();
-
-#ifdef ENABLE_ASM
-            UWORD *Table = BlendTables;
-
-            __asm {
-                push  ebp
-                    push  esi
-                    push  edi
-                    mov   _ESP, esp
-
-                    mov   edi, p
-                    mov   esi, pp
-                    mov   eax, Table
-                    ;mov   esp, Table2
-                    xor   esp, esp
-                    xor   edx, edx
-                    mov   ebx, 256
-                    mov   ebp, sizex
-
-                    Looping:
-                    mov   sp, WORD PTR [esi]
-                    ;mov   dl, BYTE PTR [esi]
-                    ;mov   bl, BYTE PTR [esi+1]
-                    ;mov   cx, WORD PTR [esp+edx*2]
-                    ;add   cx, WORD PTR [esp+ebx*2]
-                    mov   dl, BYTE PTR [edi]
-                    shl   esp, 10
-                    mov   bl, BYTE PTR [edi+1]
-                    add   eax, esp
-                    mov   cx, WORD PTR [eax+edx*2]
-                    add   cx, WORD PTR [eax+ebx*2]
-                    mov   WORD PTR [edi], cx
-                    sub   eax, esp
-
-                    add   esi, 2
-                    add   edi, 2
-
-                    dec   ebp
-                    jnz   Looping
-
-                    mov   esp, _ESP
-                    pop   edi
-                    pop   esi
-                    pop   ebp
-            }
-#else
-            /*for (cx=sizex; cx>0; cx--)
-              {
-             *p = Table[((UBYTE*)p)[0]]+Table[256+((UBYTE*)p)[1]]+
-             Table2[((UBYTE*)pp)[0]]+Table2[256+((UBYTE*)pp)[1]];
-
-             p++;
-             pp++;
-             }*/
-
-            for (cx = sizex; cx > 0; cx--) {
-                UWORD *Table1 = BlendTables.getData() + (SLONG(*pp) << 9);
-
-                *p = UWORD(Table1[(reinterpret_cast<UBYTE *>(p))[0]] + Table1[256 + (reinterpret_cast<UBYTE *>(p))[1]]);
-
-                p++;
-                pp++;
-            }
-#endif
-            memcpy(((static_cast<char *>(Key.Bitmap)) + t.x * 2 + (cy + t.y) * Key.lPitch), PixelBuffer.getData(), sizex * 2);
+        for (SLONG cx = sizex; cx > 0; cx--) {
+            const UWORD *Table1 = BlendTables.getData() + (SLONG(*pp) << 9);
+            *p = UWORD(Table1[(reinterpret_cast<UBYTE *>(p))[0]] + Table1[256 + (reinterpret_cast<UBYTE *>(p))[1]]);
+            p++;
+            pp++;
         }
     }
+}
+
+void SB_CColorFX::ReplayAlpha(SDL_Surface *target, SDL_Surface *shade, XY pos, const void *ctx) {
+    const auto *fx = static_cast<const SB_CColorFX *>(ctx);
+    SDL_LockSurface(target);
+    SDL_LockSurface(shade);
+    fx->AlphaRows(target->pixels, target->pitch, target->w, target->h, shade->pixels, shade->pitch, shade->w, shade->h, pos);
+    SDL_UnlockSurface(shade);
+    SDL_UnlockSurface(target);
 }
 
 //--------------------------------------------------------------------------------------------

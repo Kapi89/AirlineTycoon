@@ -529,9 +529,23 @@ void CStdRaum::UpdateHdBackground(__int64 graficId) {
         return;
     }
     SDL_Surface *hd = pRoomLib->GetHdSurface(graficId);
-    if (hd != nullptr) {
-        HdPicTexture = PrimaryBm.PrimaryBm.CreateHdTexture(hd);
+    SDL_Surface *pic = PicBitmap.pBitmap != nullptr ? PicBitmap.pBitmap->GetSurface() : nullptr;
+    if (hd == nullptr || pic == nullptr) {
+        return;
     }
+    // Referenz ist das Hintergrundbild so, wie es geladen wurde. Was ein Raum spaeter selbst in
+    // PicBitmap malt (z. B. der schlafende Kioskverkaeufer), fehlt in der HD-Textur und muss deshalb
+    // von der Differenzmaske als Unterschied erkannt werden und im Overlay erscheinen.
+    HdRefSurface = SDL_CreateRGBSurfaceWithFormat(0, pic->w, pic->h, 16, SDL_PIXELFORMAT_RGB565);
+    if (HdRefSurface == nullptr) {
+        return;
+    }
+    SDL_LockSurface(pic); // entpackt ggf. RLE
+    for (SLONG y = 0; y < pic->h; y++) {
+        memcpy(static_cast<Uint8 *>(HdRefSurface->pixels) + y * HdRefSurface->pitch, static_cast<const Uint8 *>(pic->pixels) + y * pic->pitch, pic->w * 2);
+    }
+    SDL_UnlockSurface(pic);
+    HdPicTexture = PrimaryBm.PrimaryBm.CreateHdTexture(hd);
 }
 
 void CStdRaum::ReleaseHdBackground() {
@@ -539,6 +553,10 @@ void CStdRaum::ReleaseHdBackground() {
         PrimaryBm.PrimaryBm.ForgetHdTexture(HdPicTexture);
         SDL_DestroyTexture(HdPicTexture);
         HdPicTexture = nullptr;
+    }
+    if (HdRefSurface != nullptr) {
+        SDL_FreeSurface(HdRefSurface);
+        HdRefSurface = nullptr;
     }
 }
 
@@ -3566,9 +3584,9 @@ void CStdRaum::OnPaint(BOOL /*bHandyDialog*/) {
 
             // HD-Hintergrund anmelden; RoomBm landet unten bei (0,0) im Primaerpuffer.
             // Nur der Raum, in dem der Spieler steht, nicht z. B. ein Handy-Dialog.
-            if (HdPicTexture != nullptr && PlayerNum >= 0 && Sim.Players.Players[PlayerNum].LocationWin == this) {
+            if (HdPicTexture != nullptr && HdRefSurface != nullptr && PlayerNum >= 0 && Sim.Players.Players[PlayerNum].LocationWin == this) {
                 const SDL_Rect rect{WinP1.x, WinP1.y, PicBitmap.Size.x, PicBitmap.Size.y};
-                PrimaryBm.PrimaryBm.SetHdBackground(HdPicTexture, rect, PicBitmap.pBitmap->GetSurface());
+                PrimaryBm.PrimaryBm.SetHdBackground(HdPicTexture, rect, HdRefSurface);
             }
         }
 

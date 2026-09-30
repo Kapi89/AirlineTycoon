@@ -69,6 +69,7 @@ class CStdRaum {
     GfxLib *pRoomLib;            // Library für den Raum;
     SBBM PicBitmap;              // Der Raum
     SDL_Texture *HdPicTexture{}; // HD-Fassung von PicBitmap als GPU-Textur (Phase 2), sonst nullptr
+    SDL_Surface *HdRefSurface{}; // unveraenderte 1x-Kopie von PicBitmap direkt nach dem Laden (Referenz fuer die Differenzmaske)
     void UpdateHdBackground(__int64 graficId);
     void ReleaseHdBackground();
     SBBM OnscreenBitmap;         // On-Screen Dialoge & Menüs
