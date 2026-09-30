@@ -8,6 +8,7 @@
 #include <SDL_timer.h>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <string>
 
@@ -45,6 +46,28 @@ void SB_ForgetHdSurface(const SDL_Surface *hd) {
     }
 }
 
+static bool gHdMissingLog = false;
+static std::string gHdRoom = "-";
+static std::set<std::string> gHdMissingSeen;
+
+void SB_SetHdMissingLog(bool on) {
+    gHdMissingLog = on;
+    if (on) {
+        AT_Log("HD-fehlt-Liste aktiv: jeder GLI-Chunk ohne %d-fache PNG erscheint einmal als 'HD fehlt'", SB_GetRenderScale());
+    }
+}
+bool SB_GetHdMissingLog() { return gHdMissingLog; }
+void SB_SetHdRoom(const char *room) { gHdRoom = room != nullptr && room[0] != '\0' ? room : "-"; }
+
+// Einmal je Chunk: wird in 1x gezeichnet, obwohl HD aktiv ist
+static void HdReportMissing(const std::string &name, SDL_Surface *surface, const char *why) {
+    if (!gHdMissingLog || name.empty() || surface == nullptr || !gHdMissingSeen.insert(name).second) {
+        return;
+    }
+    const SLONG s = SB_GetRenderScale();
+    AT_Log("HD fehlt (Raum %s): %s  %dx%d -> %dx%d%s", gHdRoom.c_str(), name.c_str(), surface->w, surface->h, surface->w * s, surface->h * s, why);
+}
+
 void SB_RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                        SLONG param, SB_HdEffectReplay replay, const void *ctx) {
     if (gHdPrimary != nullptr && target != nullptr && src != nullptr && SB_GetRenderScale() > 1) {
@@ -80,6 +103,10 @@ void SB_CBitmapCore::RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, S
         return;
     }
     target->HdCheck = true;
+    if (HdTexture == nullptr && !HdName.empty()) {
+        HdReportMissing(HdName, lpDDSurface, "");
+        HdName.clear();
+    }
     const bool srcHd = HdTexture != nullptr || (HdList != nullptr && !HdList->empty());
     if (srcHd || target == gHdPrimary || target->HdList != nullptr) {
         gHdPrimary->RecordHdBlit(this, target, srcRect, x, y, colorKey);
@@ -123,6 +150,9 @@ ULONG SB_CBitmapMain::CreateBitmap(SB_CBitmapCore **out, GfxLib *lib, __int64 na
             if (hd != nullptr) {
                 core->HdTexture = gHdPrimary->GetHdTextureFor(hd, core->lpDDSurface, (flags & CREATE_USECOLORKEY) != 0U);
                 core->HdHash = core->HdTexture != nullptr ? HdHashSurface(core->lpDDSurface) : 0;
+            }
+            if (gHdMissingLog) {
+                core->HdName = lib->HdPathFor(name);
             }
         }
 
@@ -674,6 +704,7 @@ void SB_CPrimaryBitmap::SetHdBase(SB_CBitmapCore *bm, SDL_Texture *hd, SDL_Surfa
     int texW = 0;
     SDL_QueryTexture(hd, nullptr, nullptr, &texW, nullptr);
     bm->HdTexture = nullptr; // eigene GLI-HD-Textur nicht mehr verwenden: bm wird bemalt (Kiosk-Schlaefer)
+    bm->HdName.clear();      // hat HD (als Basiseintrag), gehoert nicht in die HD-fehlt-Liste
     auto *list = HdListOf(bm, true);
     list->clear();
     SB_HdEntry e;
@@ -1028,8 +1059,10 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
         return;
     }
     if (src->HdTexture != nullptr && !HdStillValid(ss, src->HdHash, src->HdCheck)) {
-        AT_Log("HD: Bitmap %dx%d wurde bemalt, zeige sie in 1x", ss->w, ss->h);
+        AT_Log("HD: Bitmap %dx%d %s wurde bemalt, zeige sie in 1x", ss->w, ss->h, src->HdName.c_str());
         src->HdTexture = nullptr;
+        HdReportMissing(src->HdName, ss, " (HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt)");
+        src->HdName.clear();
     }
     const SDL_Rect bounds{0, 0, ss->w, ss->h};
     SDL_Rect sr;
@@ -1091,6 +1124,10 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
     std::vector<SB_HdEntry> *list = HdListOf(target, false);
     if (list == nullptr) {
         return; // Offscreen ohne HD-Inhalt: bleibt 1x
+    }
+    if (src->HdTexture == nullptr && !src->HdName.empty()) {
+        HdReportMissing(src->HdName, surface, " (ColorFX)");
+        src->HdName.clear();
     }
     SB_HdEntry e;
     e.Src = surface;

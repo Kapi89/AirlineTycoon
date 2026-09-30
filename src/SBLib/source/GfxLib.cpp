@@ -319,6 +319,13 @@ SDL_Surface *GfxLib::GetSurface(__int64 name) {
     return nullptr;
 }
 
+std::string GfxLib::HdPathFor(__int64 name) const {
+    char raw[8];
+    memcpy(raw, &name, sizeof(raw));
+    const fs::path p{static_cast<const char *>(Path)};
+    return "hd/" + ToLower(p.parent_path().filename().string()) + "/" + ToLower(p.filename().string()) + "/" + HdChunkName(raw) + ".png";
+}
+
 SDL_Surface *GfxLib::GetHdSurface(__int64 name) {
     auto it = HdSurfaces.find(name);
     return it != HdSurfaces.end() ? it->second : nullptr;

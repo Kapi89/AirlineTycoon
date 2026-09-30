@@ -58,6 +58,7 @@ class GfxLib {
     SDL_Surface *GetSurface(__int64);
     SDL_Surface *GetSurface(SLONG);
     SDL_Surface *GetHdSurface(__int64); // HD-Datei in s-facher Groesse (Phase 2), sonst nullptr
+    std::string HdPathFor(__int64 name) const; // relativer Pfad der HD-Datei zu einem Chunk, z. B. hd/room/kiosk.gli/SLEEPER.png
     static SLONG AddRef(__int64);
     SLONG AddRef(SLONG);
     __int64 LongName2Id(char *);
@@ -217,6 +218,7 @@ class SB_CBitmapCore {
     SDL_Texture *HdTexture{nullptr}; // HD-Fassung (s-fach, mit Alpha), gehoert SB_CPrimaryBitmap (Phase 2, H4)
     std::vector<SB_HdEntry> *HdList{nullptr}; // HD-Inhalte dieser Offscreen-Bitmap (H6), gehoert der Bitmap
     Uint64 HdHash{0};                         // Pruefsumme der 1x-Pixel beim Anlegen der HD-Textur
+    std::string HdName;                       // HD-Pfad des Chunks (nur mit OptionHdMissingLog), fuer die Liste fehlender HD-Grafiken
     bool HdCheck{false};                      // 1x-Pixel koennten veraendert sein: vor dem naechsten HD-Blit pruefen
     friend class SB_CPrimaryBitmap;
     XY Size;
@@ -262,6 +264,12 @@ SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const 
 
 // HD-Texturen fuer GLI-Bitmaps (Phase 2, H4): GfxLib meldet freigegebene HD-Surfaces ab
 void SB_ForgetHdSurface(const SDL_Surface *hd);
+
+// Liste fehlender HD-Grafiken (OptionHdMissingLog): Jeder GLI-Chunk, der ohne s-fache PNG gezeichnet
+// wird, erscheint einmal im Log mit Raum, Pfad und Groesse. room ist der Raum, der gerade zeichnet.
+void SB_SetHdMissingLog(bool on);
+bool SB_GetHdMissingLog();
+void SB_SetHdRoom(const char *room);
 
 // Effekte ueber HD (Phase 2, H5/H6): ColorFX meldet Abdunkeln (BlitAlpha, kind 1) und Transparenz
 // (BlitTrans, kind 2, alpha = Deckkraft der Quelle). replay spielt dieselbe Rechnung auf der Referenz nach.
