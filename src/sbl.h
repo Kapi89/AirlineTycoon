@@ -58,6 +58,7 @@ class GfxLib {
     SDL_Surface *GetSurface(__int64);
     SDL_Surface *GetSurface(SLONG);
     SDL_Surface *GetHdSurface(__int64); // HD-Datei in s-facher Groesse (Phase 2), sonst nullptr
+    std::string HdPathFor(__int64 name) const; // relativer Pfad der HD-Datei zu einem Chunk, z. B. hd/room/kiosk.gli/SLEEPER.png
     static SLONG AddRef(__int64);
     SLONG AddRef(SLONG);
     __int64 LongName2Id(char *);
@@ -170,7 +171,7 @@ class SB_CBitmapCore {
     virtual ULONG Release(void);
     ULONG BlitFast(class SB_CBitmapCore *, SLONG, SLONG);
     ULONG BlitFast(class SB_CBitmapCore *, SLONG, SLONG, const CRect &);
-    ULONG BlitChar(SDL_Surface *, SLONG, SLONG, const SDL_Rect &);
+    ULONG BlitChar(SDL_Surface *, SLONG, SLONG, const SDL_Rect &, SDL_Texture *hd = nullptr); // hd: HD-Glyphenblatt (H7)
     ULONG Blit(class SB_CBitmapCore *, SLONG, SLONG);
     ULONG Blit(class SB_CBitmapCore *, SLONG, SLONG, const CRect &);
     SLONG BlitA(class SB_CBitmapCore *, SLONG, SLONG, const RECT *, SB_Hardwarecolor);
@@ -217,6 +218,7 @@ class SB_CBitmapCore {
     SDL_Texture *HdTexture{nullptr}; // HD-Fassung (s-fach, mit Alpha), gehoert SB_CPrimaryBitmap (Phase 2, H4)
     std::vector<SB_HdEntry> *HdList{nullptr}; // HD-Inhalte dieser Offscreen-Bitmap (H6), gehoert der Bitmap
     Uint64 HdHash{0};                         // Pruefsumme der 1x-Pixel beim Anlegen der HD-Textur
+    std::string HdName;                       // HD-Pfad des Chunks (nur mit OptionHdMissingLog), fuer die Liste fehlender HD-Grafiken
     bool HdCheck{false};                      // 1x-Pixel koennten veraendert sein: vor dem naechsten HD-Blit pruefen
     friend class SB_CPrimaryBitmap;
     XY Size;
@@ -263,6 +265,15 @@ SLONG SB_BuildHdOverlay(const SDL_Surface *frame, const SDL_Surface *ref, const 
 // HD-Texturen fuer GLI-Bitmaps (Phase 2, H4): GfxLib meldet freigegebene HD-Surfaces ab
 void SB_ForgetHdSurface(const SDL_Surface *hd);
 
+// Liste fehlender HD-Grafiken (OptionHdMissingLog): Jeder GLI-Chunk, der ohne s-fache PNG gezeichnet
+// wird, erscheint einmal im Log mit Raum, Pfad und Groesse. room ist der Raum, der gerade zeichnet.
+void SB_SetHdMissingLog(bool on);
+void SB_ReportHdMissing(const std::string &path, SLONG w, SLONG h, const char *why); // Groesse in 1x
+// HD-Textur zu einer s-fachen HD-Surface (Cache im Primaerpuffer), nullptr ohne HD-Ebene
+SDL_Texture *SB_GetHdTexture(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
+bool SB_GetHdMissingLog();
+void SB_SetHdRoom(const char *room);
+
 // Effekte ueber HD (Phase 2, H5/H6): ColorFX meldet Abdunkeln (BlitAlpha, kind 1) und Transparenz
 // (BlitTrans, kind 2, alpha = Deckkraft der Quelle). replay spielt dieselbe Rechnung auf der Referenz nach.
 void SB_RecordHdEffect(class SB_CBitmapCore *target, class SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind,
@@ -299,6 +310,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_Texture *GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
+    void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                         SLONG param, SB_HdEffectReplay replay, const void *ctx);
     void HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque);
@@ -456,6 +468,7 @@ class SB_CFont {
     bool GetSurface(struct _DDSURFACEDESC *);
     void ReleaseSurface(struct _DDSURFACEDESC *);
     bool DrawChar(unsigned char, bool);
+    void ReleaseHd();
     bool DrawWord(const char *, SLONG);
     unsigned char *GetDataPtr(void);
     bool CreateFontSurface(SDL_Renderer *);
@@ -468,6 +481,10 @@ class SB_CFont {
     BYTE *VarWidth;
     BYTE *VarHeight;
     bool Hidden;
+    SDL_Surface *HdSurface{nullptr}; // Glyphenblatt in s-facher Groesse (Phase 2, H7): hd/<ordner>/<datei>.png
+    SDL_Texture *HdTexture{nullptr}; // gehoert dem Primaerpuffer (Cache)
+    bool HdTried{false};
+    std::string HdPath;
     TABS *Tabulator;
     word NumTabs{};
     XY Pos;

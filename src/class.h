@@ -2457,6 +2457,7 @@ class COptions {
     BOOL OptionKeepAspectRatio{};
     SLONG OptionRenderScale{}; // Render-Faktor s (1 = wie bisher), wirkt beim Neustart
     SLONG OptionHdOverlayFilter{}; // Filter fuer das 1x-Overlay ueber HD-Hintergruenden: 0 = nearest, 1 = linear
+    BOOL OptionHdMissingLog{};     // 1: jeder GLI-Chunk ohne HD-PNG einmal als "HD fehlt" im Log (mit Raum, Pfad, Groesse)
     BOOL OptionHdDebugMask{};      // 1: alle 5 s hd_frame/hd_ref/hd_mask.png in den Ordner hd_debug neben der AT.exe
     SLONG OptionScreenWindowedWidth{};
     SLONG OptionScreenWindowedHeight{};

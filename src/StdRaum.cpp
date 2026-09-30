@@ -342,6 +342,7 @@ CStdRaum::CStdRaum(BOOL handy, ULONG playerNum, const CString &GfxLibName, __int
         pRoomLibStatic = nullptr;
     } else {
         if (GfxLibName.GetLength() > 0) {
+            HdRoomName = static_cast<const char *>(GfxLibName);
             pGfxMain->LoadLib(const_cast<char *>((LPCTSTR)FullFilename(GfxLibName, RoomPath)), &pRoomLib, L_LOCMEM);
         } else {
             pRoomLib = nullptr;
@@ -574,6 +575,7 @@ void CStdRaum::ReSize(const CString &GfxLibName, __int64 graficId) {
     }
 
     if (GfxLibName.GetLength() > 0) {
+        HdRoomName = static_cast<const char *>(GfxLibName);
         pGfxMain->LoadLib(const_cast<char *>((LPCTSTR)FullFilename(GfxLibName, RoomPath)), &pRoomLib, L_LOCMEM);
     } else {
         pRoomLib = nullptr;
@@ -3583,6 +3585,9 @@ void CStdRaum::OnPaint(BOOL /*bHandyDialog*/) {
 
         if (PicBitmap.Size.x != 0) {
             RoomBm.BlitFrom(PicBitmap, WinP1.x, WinP1.y); // nimmt den HD-Hintergrund als Eintrag mit (H6)
+        }
+        if (SB_GetHdMissingLog() && PlayerNum >= 0 && Sim.Players.Players[PlayerNum].LocationWin == this) {
+            SB_SetHdRoom(HdRoomName.empty() ? "Flughafen/ohne Raum-GLI" : HdRoomName.c_str());
         }
 
         if (bHandy != 0) // Handy einblendung?
