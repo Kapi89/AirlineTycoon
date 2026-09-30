@@ -909,7 +909,7 @@ void CStdRaum::MakeNumberWindow(CString Text) {
                         SDL_Rect SrcRect = {0, 0, gNumberTemplate.Size.x, gNumberTemplate.Size.y};
                         SDL_Rect DestRect = {0, 0, NumberBitmap.Size.x, NumberBitmap.Size.y};
 
-                        SDL_BlitScaled(gNumberTemplate.pBitmap->GetSurface(), &SrcRect, NumberBitmap.pBitmap->GetSurface(), &DestRect);
+                        gNumberTemplate.pBitmap->BlitScaled(NumberBitmap.pBitmap, SrcRect, DestRect);
 
                         SLONG sizey = NumberBitmap.TryPrintAt(Text, FontDialogPartner, TEC_FONT_LEFT, XY(10, 10), NumberBitmap.Size - XY(10, 10));
 
@@ -3006,7 +3006,7 @@ void CStdRaum::PostPaint() {
                         DestRect.h = SLONG(OnscreenBitmap.Size.y * (MinimumZoom * 100 + ((ZoomCounter * (1.0 - MinimumZoom)))) / 100);
                     }
 
-                    SDL_BlitScaled(OnscreenBitmap.pBitmap->GetSurface(), &SrcRect, PrimaryBm.PrimaryBm.GetSurface(), &DestRect);
+                    OnscreenBitmap.pBitmap->BlitScaled(&PrimaryBm.PrimaryBm, SrcRect, DestRect);
                 }
 
                 if (CurrentMenu == MENU_EXTRABLATT) {
@@ -3055,7 +3055,7 @@ void CStdRaum::PostPaint() {
                 DestRect.w = SLONG(OnscreenBitmap.Size.x * (MinimumZoom * 100 + ((ZoomCounter * (1.0 - MinimumZoom)))) / 100);
                 DestRect.h = SLONG(OnscreenBitmap.Size.y * (MinimumZoom * 100 + ((ZoomCounter * (1.0 - MinimumZoom)))) / 100);
 
-                SDL_BlitScaled(OnscreenBitmap.pBitmap->GetSurface(), &SrcRect, PrimaryBm.PrimaryBm.GetSurface(), &DestRect);
+                OnscreenBitmap.pBitmap->BlitScaled(&PrimaryBm.PrimaryBm, SrcRect, DestRect);
             }
         }
 
