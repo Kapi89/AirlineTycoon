@@ -60,12 +60,22 @@ bool SB_GetHdMissingLog() { return gHdMissingLog; }
 void SB_SetHdRoom(const char *room) { gHdRoom = room != nullptr && room[0] != '\0' ? room : "-"; }
 
 // Einmal je Chunk: wird in 1x gezeichnet, obwohl HD aktiv ist
-static void HdReportMissing(const std::string &name, SDL_Surface *surface, const char *why) {
-    if (!gHdMissingLog || name.empty() || surface == nullptr || !gHdMissingSeen.insert(name).second) {
+void SB_ReportHdMissing(const std::string &name, SLONG w, SLONG h, const char *why) {
+    if (!gHdMissingLog || name.empty() || !gHdMissingSeen.insert(name).second) {
         return;
     }
     const SLONG s = SB_GetRenderScale();
-    AT_Log("HD fehlt (Raum %s): %s  %dx%d -> %dx%d%s", gHdRoom.c_str(), name.c_str(), surface->w, surface->h, surface->w * s, surface->h * s, why);
+    AT_Log("HD fehlt (Raum %s): %s  %dx%d -> %dx%d%s", gHdRoom.c_str(), name.c_str(), w, h, w * s, h * s, why);
+}
+
+static void HdMissingSurface(const std::string &name, SDL_Surface *surface, const char *why) {
+    if (surface != nullptr) {
+        SB_ReportHdMissing(name, surface->w, surface->h, why);
+    }
+}
+
+SDL_Texture *SB_GetHdTexture(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->GetHdTextureFor(hd, orig1x, colorKey) : nullptr;
 }
 
 void SB_RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
@@ -104,7 +114,7 @@ void SB_CBitmapCore::RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, S
     }
     target->HdCheck = true;
     if (HdTexture == nullptr && !HdName.empty()) {
-        HdReportMissing(HdName, lpDDSurface, "");
+        HdMissingSurface(HdName, lpDDSurface, "");
         HdName.clear();
     }
     const bool srcHd = HdTexture != nullptr || (HdList != nullptr && !HdList->empty());
@@ -571,10 +581,14 @@ ULONG SB_CBitmapCore::BlitFast(class SB_CBitmapCore *core, SLONG x, SLONG y, con
     return 0;
 }
 
-ULONG SB_CBitmapCore::BlitChar(SDL_Surface *font, SLONG x, SLONG y, const SDL_Rect &rect) {
+ULONG SB_CBitmapCore::BlitChar(SDL_Surface *font, SLONG x, SLONG y, const SDL_Rect &rect, SDL_Texture *hd) {
     HdCheck = true;
     SDL_Rect dst = {x, y, rect.w, rect.h};
-    return SDL_BlitSurface(font, &rect, lpDDSurface, &dst);
+    const int rc = SDL_BlitSurface(font, &rect, lpDDSurface, &dst);
+    if (hd != nullptr && gHdPrimary != nullptr) {
+        gHdPrimary->RecordHdTex(this, font, hd, rect, x, y, true); // Zeichen aus dem HD-Glyphenblatt (H7)
+    }
+    return rc;
 }
 
 void SB_CBitmapCore::InitClipRect() { SDL_SetClipRect(lpDDSurface, nullptr); }
@@ -1052,6 +1066,16 @@ static bool HdStillValid(SDL_Surface *surface, Uint64 hash, bool &check) {
     return HdHashSurface(surface) == hash;
 }
 
+// Zielbereich eines Blits: srcRect an der Quelle und am Clip-Rechteck des Ziels beschnitten
+static bool HdBlitArea(SDL_Surface *ss, SDL_Surface *ts, const SDL_Rect &srcRect, SLONG x, SLONG y, SDL_Rect &sr, SDL_Rect &dr, SDL_Rect &area) {
+    const SDL_Rect bounds{0, 0, ss->w, ss->h};
+    if (SDL_IntersectRect(&srcRect, &bounds, &sr) == SDL_FALSE) {
+        return false;
+    }
+    dr = SDL_Rect{sr.x + x - srcRect.x, sr.y + y - srcRect.y, sr.w, sr.h};
+    return SDL_IntersectRect(&dr, &ts->clip_rect, &area) == SDL_TRUE;
+}
+
 void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
     SDL_Surface *ts = target->lpDDSurface;
     SDL_Surface *ss = src->lpDDSurface;
@@ -1061,24 +1085,19 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
     if (src->HdTexture != nullptr && !HdStillValid(ss, src->HdHash, src->HdCheck)) {
         AT_Log("HD: Bitmap %dx%d %s wurde bemalt, zeige sie in 1x", ss->w, ss->h, src->HdName.c_str());
         src->HdTexture = nullptr;
-        HdReportMissing(src->HdName, ss, " (HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt)");
+        HdMissingSurface(src->HdName, ss, " (HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt)");
         src->HdName.clear();
     }
-    const SDL_Rect bounds{0, 0, ss->w, ss->h};
-    SDL_Rect sr;
-    if (SDL_IntersectRect(&srcRect, &bounds, &sr) == SDL_FALSE) {
+    if (src->HdList == nullptr && src->HdTexture != nullptr) {
+        RecordHdTex(target, ss, src->HdTexture, srcRect, x, y, colorKey);
         return;
     }
-    const SLONG ox = x - srcRect.x;
-    const SLONG oy = y - srcRect.y;
-    const SDL_Rect dr{sr.x + ox, sr.y + oy, sr.w, sr.h};
-    SDL_Rect area;
-    if (SDL_IntersectRect(&dr, &ts->clip_rect, &area) == SDL_FALSE) {
+    SDL_Rect sr, dr, area;
+    if (!HdBlitArea(ss, ts, srcRect, x, y, sr, dr, area)) {
         return;
     }
-    const bool fromList = src->HdList != nullptr && !src->HdList->empty() && !colorKey;
-    const bool fromTex = src->HdList == nullptr && src->HdTexture != nullptr;
-    std::vector<SB_HdEntry> *list = HdListOf(target, fromList || fromTex);
+    const bool fromList = src->HdList != nullptr && !src->HdList->empty();
+    std::vector<SB_HdEntry> *list = HdListOf(target, fromList);
     if (list == nullptr) {
         return;
     }
@@ -1086,7 +1105,11 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
         HdCover(*list, area);
     }
     if (fromList) {
-        // Inhalt einer Offscreen-Bitmap: ihre Eintraege verschoben und auf den Zielbereich beschnitten
+        // Inhalt einer Offscreen-Bitmap: ihre Eintraege verschoben und auf den Zielbereich beschnitten.
+        // Bei Colorkey-Blits gilt dasselbe: Pixel 0 der Quelle zeigen das Ziel, das die Referenz dort
+        // ebenfalls behaelt; wo ein Eintrag etwas anderes ergibt, passt die Referenz nicht (1x).
+        const SLONG ox = x - srcRect.x;
+        const SLONG oy = y - srcRect.y;
         for (const SB_HdEntry &e : *src->HdList) {
             SB_HdEntry n = e;
             n.Dst.x += ox;
@@ -1099,19 +1122,32 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
             }
             list->push_back(std::move(n));
         }
-    } else if (fromTex) {
-        SB_HdEntry e;
-        e.Src = ss;
-        e.Tex = src->HdTexture;
-        e.TexScale = SB_GetRenderScale();
-        e.SrcRect = sr;
-        e.Dst = dr;
-        e.Clip = ts->clip_rect;
-        e.ColorKey = colorKey;
-        e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
-        list->push_back(e);
     }
-    HdLimit(*list, target == this ? 8192 : 1024);
+    HdLimit(*list, target == this ? 16384 : 4096);
+}
+
+// Blit aus einer Textur: Sprite mit HD-Textur oder Zeichen aus einem HD-Glyphenblatt (H7)
+void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
+    SDL_Surface *ts = target->lpDDSurface;
+    SDL_Rect sr, dr, area;
+    if (ts == nullptr || src == nullptr || tex == nullptr || SB_GetRenderScale() <= 1 || !CanUseHd() || !HdBlitArea(src, ts, srcRect, x, y, sr, dr, area)) {
+        return;
+    }
+    std::vector<SB_HdEntry> *list = HdListOf(target, true);
+    if (!colorKey) {
+        HdCover(*list, area);
+    }
+    SB_HdEntry e;
+    e.Src = src;
+    e.Tex = tex;
+    e.TexScale = SB_GetRenderScale();
+    e.SrcRect = sr;
+    e.Dst = dr;
+    e.Clip = ts->clip_rect;
+    e.ColorKey = colorKey;
+    e.TexAlpha = HdAlphaTex.count(tex) != 0;
+    list->push_back(e);
+    HdLimit(*list, target == this ? 16384 : 4096);
 }
 
 void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind,
@@ -1126,7 +1162,7 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
         return; // Offscreen ohne HD-Inhalt: bleibt 1x
     }
     if (src->HdTexture == nullptr && !src->HdName.empty()) {
-        HdReportMissing(src->HdName, surface, " (ColorFX)");
+        HdMissingSurface(src->HdName, surface, " (ColorFX)");
         src->HdName.clear();
     }
     SB_HdEntry e;
@@ -1160,7 +1196,7 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
         return;
     }
     list->push_back(e);
-    HdLimit(*list, target == this ? 8192 : 1024);
+    HdLimit(*list, target == this ? 16384 : 4096);
 }
 
 void SB_CPrimaryBitmap::HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque) {
@@ -1409,10 +1445,14 @@ SLONG SB_CPrimaryBitmap::Present() {
             };
             // Basis: 1x-Frame, damit unter weichen HD-Raendern nie Schwarz durchscheint
             SDL_RenderCopyF(lpDD, lpTexture, nullptr, &full);
+            SDL_Rect lastClip{-1, -1, -1, -1};
             for (const SB_HdEntry &b : HdDrawList) {
                 const SDL_FRect c = toTarget(b.Clip);
                 const SDL_Rect clip{SLONG(c.x), SLONG(c.y), SLONG(c.x + c.w + 0.999F) - SLONG(c.x), SLONG(c.y + c.h + 0.999F) - SLONG(c.y)};
-                SDL_RenderSetClipRect(lpDD, &clip);
+                if (SDL_RectEquals(&clip, &lastClip) == SDL_FALSE) {
+                    SDL_RenderSetClipRect(lpDD, &clip); // nur bei Wechsel, damit SDL die Zeichenaufrufe buendeln kann
+                    lastClip = clip;
+                }
                 const SLONG ts = b.TexScale;
                 const SDL_Rect src{b.SrcRect.x * ts, b.SrcRect.y * ts, b.SrcRect.w * ts, b.SrcRect.h * ts};
                 const SDL_FRect dst = toTarget(b.Dst);

@@ -48,4 +48,30 @@ Gibt es dort eine PNG zum Chunk, haengt es von ihrer Groesse ab, was passiert:
   ignoriert; transparente Stellen muessen Schwarz bleiben (Colorkey).
 - Andere Groessen werden ignoriert (Meldung im Log).
 
+### Schriften (HD)
+
+Die Schriften (`.mcf`) sind Glyphenblaetter: alle Zeichen untereinander, jedes gleich gross.
+
+```
+python3 tools/mcf_export.py /pfad/zum/spiel -o hd_assets/original
+```
+
+Ergebnis: `hd_assets/original/<ordner>/<datei>.png`, z. B. `misc/norm_bl.mcf.png` (RGBA, durchsichtig wie im
+Spiel). Die HD-Fassung liegt als `hd/<ordner>/<datei>.png` neben der `AT.exe`, z. B. `hd/misc/norm_bl.mcf.png`,
+in **genau s-facher Groesse** des Blatts und im selben Layout (Zeichen untereinander). Mit Alphakanal gilt dieser,
+sonst wird die Maske aus dem Original berechnet. Jede Schriftdatei braucht ihre eigene PNG (z. B. `norm_bl`,
+`norm_rt`, `norm_wh` unterscheiden sich nur in der Farbe).
+
+### Welche HD-Grafiken fehlen noch?
+
+In `AT.json` `"OptionHdMissingLog": true` setzen. Dann steht fuer jeden Chunk und jede Schrift, die im Spiel
+ohne HD-PNG gezeichnet werden, einmal eine Zeile im Log, z. B.
+
+```
+HD fehlt (Raum kiosk.gli): hd/room/kiosk.gli/ZEITUNG.png  120x80 -> 480x320
+```
+
+Der Raum ist der, in dem die Grafik zuerst auftauchte. Grafiken, die das Spiel nachtraeglich bemalt, stehen mit
+dem Hinweis "HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt" in der Liste; sie bleiben 1x.
+
 Ohne `hd/`-Ordner verhaelt sich das Spiel unveraendert.
