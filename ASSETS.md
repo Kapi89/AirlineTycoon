@@ -62,6 +62,17 @@ in **genau s-facher Groesse** des Blatts und im selben Layout (Zeichen untereina
 sonst wird die Maske aus dem Original berechnet. Jede Schriftdatei braucht ihre eigene PNG (z. B. `norm_bl`,
 `norm_rt`, `norm_wh` unterscheiden sich nur in der Farbe).
 
+### Diagnose (HD-Ebene)
+
+- **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
+  `hd_f11_<n>_frame.png` (1x-Frame), `_ref.png` (nachgespielte Referenz), `_mask.png` (magenta = HD sichtbar,
+  sonst der 1x-Pixel, der im Overlay deckend liegt), `_hd.png` (1x-Basis + HD-Ebene ohne Overlay) und
+  `_screen.png` (so wie angezeigt, ohne Mauszeiger). Im Log steht eine Zeile `HD-Debug F11 #<n>` mit
+  Frame-Nummer, Anteil durchsichtig und Herkunft der Liste.
+- Alle 5 Sekunden steht im Log eine Zeile `HD-Ausfaelle`: Presents ohne HD-Ebene bzw. mit mehr als 50 % 1x,
+  Frames mit mehr als 50 % 1x, Frames, die mit der letzten Liste ergaenzt wurden, und wie viele Eintraege je
+  Frame aus dem letzten Frame uebernommen wurden (Stellen, die das Spiel nicht neu gezeichnet hat).
+
 ### Welche HD-Grafiken fehlen noch?
 
 In `AT.json` `"OptionHdMissingLog": true` setzen. Dann steht fuer jeden Chunk und jede Schrift, die im Spiel
