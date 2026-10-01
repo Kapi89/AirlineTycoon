@@ -319,7 +319,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void SetFrameWidth(SLONG w); // Bildbreite wechseln (640 = wie bisher); verwirft die HD-Listen des Primaerpuffers
     // Breitbild (H14): bis EndView zeichnet alles in ein Fenster ab Bild-x ox (Breite Size.x - 2*ox), z. B. die
     // Oberflaeche mittig ueber der breiten Halle. HD-Eintraege werden dabei in Fensterkoordinaten gefuehrt.
-    void BeginView(SLONG ox);
+    void BeginView(SLONG ox, SLONG w = -1); // w: Breite des Fensters, -1 = mittig (Size.x - 2 * ox)
     void EndView();
     SLONG GetViewOffset() const { return ViewOffset; }
     XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)

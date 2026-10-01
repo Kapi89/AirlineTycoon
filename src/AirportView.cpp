@@ -50,11 +50,6 @@ SLONG timeWerbOpen = 12 * 60000;
 extern SLONG SaveVersion;
 extern SLONG SaveVersionSub;
 
-//--------------------------------------------------------------------------------------------
-// Breitbild (H14): Fuellung links und rechts neben der 640 breiten Statuszeile. Eigene Grafik:
-// hd/misc/statusleiste_fuellung.png neben der AT.exe (Hoehe 40 x Render-Faktor, wird gekachelt).
-// Fehlt sie, werden die aeusseren 8 Spalten der Statuszeile gestreckt.
-//--------------------------------------------------------------------------------------------
 // Breitbild-Test (H14b, mit OptionHdDebugMask): zaehlt Hallenpixel, die nach dem Zeichnen noch die Testfarbe haben
 static void CheckHallPainted() {
     static SLONG lastLog = 0;
@@ -82,47 +77,6 @@ static void CheckHallPainted() {
         AT_Log_I("Rendering", "Breitbild-Test: Halle vollstaendig gezeichnet (Bild %d breit, Ausschnitt x %d, Abschnitt-Rest %d)", frame->w, cam.x,
                  (((cam.x - gHallMargin - Airport.LeftEnd) % 320) + 320) % 320);
     }
-}
-
-static void DrawStatusLineFill() {
-    if (gHallMargin <= 0 || StatusLineBms.AnzEntries() < 7) {
-        return;
-    }
-    static SB_CBitmapCore *fill = nullptr;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
-        const CString path = AppPath + "hd/misc/statusleiste_fuellung.png";
-        if (bitmapMain->CreateBitmapFromHdPng(&fill, path.c_str(), 40) != 0) {
-            fill = nullptr;
-            AT_Log_I("Rendering", "Breitbild: %s fehlt, Statuszeile wird an den Raendern gestreckt", path.c_str());
-        }
-    }
-    const SLONG m = gHallMargin;
-    const SLONG y = 440;
-    SB_CPrimaryBitmap &prim = PrimaryBm.PrimaryBm;
-    if (fill != nullptr && fill->GetXSize() > 0) {
-        const SLONG tw = fill->GetXSize();
-        prim.SetClipRect(CRect(0, y, m, y + 40));
-        for (SLONG x = m - tw; x > -tw; x -= tw) {
-            fill->BlitFast(&prim, x, y);
-        }
-        prim.SetClipRect(CRect(m + 640, y, m * 2 + 640, y + 40));
-        for (SLONG x = m + 640; x < m * 2 + 640; x += tw) {
-            fill->BlitFast(&prim, x, y);
-        }
-    } else {
-        prim.SetClipRect(CRect(0, 0, m * 2 + 640, 480));
-        SB_CBitmapCore *left = StatusLineBms[0].pBitmap;
-        SB_CBitmapCore *right = StatusLineBms[6].pBitmap;
-        if (left != nullptr && left->GetXSize() >= 8) {
-            left->BlitScaled(&prim, SDL_Rect{0, 0, 8, min(SLONG(40), left->GetYSize())}, SDL_Rect{0, y, m, 40});
-        }
-        if (right != nullptr && right->GetXSize() >= 8) {
-            right->BlitScaled(&prim, SDL_Rect{right->GetXSize() - 8, 0, 8, min(SLONG(40), right->GetYSize())}, SDL_Rect{m + 640, y, m, 40});
-        }
-    }
-    prim.SetClipRect(CRect(0, 0, m * 2 + 640, 480));
 }
 
 // Breitbild (H14): die Halle nutzt die ganze Leinwand, der Hallen-Editor bleibt 640 breit
@@ -1508,16 +1462,16 @@ void AirportView::OnPaint() {
                 CheckHallPainted();
             }
 
-            // Breitbild (H14): Fuellung neben der Statuszeile, dann die Oberflaeche im mittleren 640er-Ausschnitt
-            DrawStatusLineFill();
+            // Breitbild: Oberflaeche im mittleren 640er-Ausschnitt; die Statuszeile reicht ueber die ganze Breite (H15)
             struct ViewGuard {
-                explicit ViewGuard(SLONG ox) { PrimaryBm.PrimaryBm.BeginView(ox); }
+                // mittlerer Ausschnitt, nach rechts bis zum Bildrand (Berater und Handy am rechten Rand, H15)
+                explicit ViewGuard(SLONG ox) { PrimaryBm.PrimaryBm.BeginView(ox, 640 + ox); }
                 ~ViewGuard() { PrimaryBm.PrimaryBm.EndView(); }
                 ViewGuard(const ViewGuard &) = delete;
                 ViewGuard &operator=(const ViewGuard &) = delete;
             } viewGuard(gHallMargin);
 
-            PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, 640, 480));
+            PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, UiRightEdge(), 480));
 
             // Die Statuszeile mit ihren Anzeigen...
             CStdRaum::OnPaint();
