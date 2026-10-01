@@ -876,7 +876,7 @@ static float SmoothStep(float e0, float e1, float v) {
 
 // Weiche Maske (H6): 1x-Maske (Colorkey) bilinear hochskaliert, dann weiche Schwelle um 0,5.
 // Die Kante liegt damit auf der 1x-Pixelgrenze, aber glatt statt treppig.
-static void HdSoftMask(SDL_Surface *argb, const SDL_Surface *orig1x) {
+static void HdSoftMask(SDL_Surface *argb, const SDL_Surface *orig1x, bool multiply = false) {
     const float sx = float(argb->w) / float(orig1x->w);
     const float sy = float(argb->h) / float(orig1x->h);
     auto opaque = [orig1x](SLONG x, SLONG y) {
@@ -894,7 +894,8 @@ static void HdSoftMask(SDL_Surface *argb, const SDL_Surface *orig1x) {
             const auto x0 = SLONG(std::floor(u));
             const float fx = u - float(x0);
             const float m = (opaque(x0, y0) * (1 - fx) + opaque(x0 + 1, y0) * fx) * (1 - fy) + (opaque(x0, y0 + 1) * (1 - fx) + opaque(x0 + 1, y0 + 1) * fx) * fy;
-            const auto a = Uint32(SmoothStep(0.35F, 0.65F, m) * 255.0F + 0.5F);
+            const float k = SmoothStep(0.35F, 0.65F, m);
+            const auto a = Uint32((multiply ? k * float(d[x] >> 24) : k * 255.0F) + 0.5F);
             d[x] = (d[x] & 0x00FFFFFF) | (a << 24);
         }
     }
@@ -947,11 +948,11 @@ static void HdBleedColors(SDL_Surface *argb, SLONG passes) {
 
 // HD-Textur zu einer HD-Surface (einmal je Surface). Hat das PNG einen Alphakanal, gilt dieser;
 // sonst weiche Maske aus dem Colorkey des 1x-Originals (H6).
-SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey) {
+SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey, bool mask1x) {
     if (!CanUseHd() || hd == nullptr || orig1x == nullptr || orig1x->format->format != SDL_PIXELFORMAT_RGB565) {
         return nullptr;
     }
-    auto &cache = colorKey ? HdTexCache : HdTexCacheOpaque;
+    auto &cache = mask1x ? HdTexCacheMask1x : (colorKey ? HdTexCache : HdTexCacheOpaque);
     auto it = cache.find(hd);
     if (it != cache.end()) {
         return it->second;
@@ -961,10 +962,10 @@ SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surfa
     if (argb == nullptr) {
         return nullptr;
     }
-    if (!pngAlpha && colorKey && orig1x->w > 0 && orig1x->h > 0) {
+    if ((mask1x || (!pngAlpha && colorKey)) && orig1x->w > 0 && orig1x->h > 0) {
         auto *o = const_cast<SDL_Surface *>(orig1x);
         SDL_LockSurface(o);
-        HdSoftMask(argb, orig1x);
+        HdSoftMask(argb, orig1x, pngAlpha); // mit eigenem Alpha: beide Masken (H14)
         SDL_UnlockSurface(o);
     }
     bool hasAlpha = false;
@@ -996,7 +997,7 @@ SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surfa
 }
 
 void SB_CPrimaryBitmap::ForgetHdSurface(const SDL_Surface *hd) {
-    for (auto *cache : {&HdTexCache, &HdTexCacheOpaque}) {
+    for (auto *cache : {&HdTexCache, &HdTexCacheOpaque, &HdTexCacheMask1x}) {
         auto it = cache->find(hd);
         if (it != cache->end()) {
             SDL_Texture *tex = it->second;
@@ -1245,6 +1246,9 @@ SB_CPrimaryBitmap::HdFlat *SB_CPrimaryBitmap::GetWhiteTextures(SDL_Surface *src,
                 if (hasKey && !e.ColorKey) {
                     SDL_SetColorKey(e.Src, SDL_FALSE, key);
                 }
+                if (!hasKey && e.KeyZero) {
+                    SDL_SetColorKey(e.Src, SDL_TRUE, 0); // wie der Colorkey-Blit der Offscreen-Bitmap (H14)
+                }
                 if (d.w != sr.w || d.h != sr.h) {
                     SDL_BlitScaled(e.Src, &sr, under, &d);
                 } else {
@@ -1252,6 +1256,9 @@ SB_CPrimaryBitmap::HdFlat *SB_CPrimaryBitmap::GetWhiteTextures(SDL_Surface *src,
                 }
                 if (hasKey && !e.ColorKey) {
                     SDL_SetColorKey(e.Src, SDL_TRUE, key);
+                }
+                if (!hasKey && e.KeyZero) {
+                    SDL_SetColorKey(e.Src, SDL_FALSE, 0);
                 }
             }
             SDL_SetClipRect(under, nullptr);
@@ -1443,6 +1450,18 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
             if (colorKey && n.Replay == nullptr) {
                 // Colorkey-Blit der Offscreen-Bitmap: Pixel 0 der Quelle zeigen das Ziel, auch wo sie deckend
                 // in die Offscreen-Bitmap kamen (z. B. Ecken eines Monitorbilds)
+                if (!n.ColorKey && !n.Glyph && n.Src != nullptr) {
+                    // Deckend in die Offscreen-Bitmap gekommen (z. B. Frachtkiste im Zettel): durchsichtig ist, was in
+                    // 1x Pixel 0 ist. Die HD-Textur bekommt diese Maske zusaetzlich zu ihrem eigenen Alpha (H14).
+                    n.KeyZero = SDL_HasColorKey(n.Src) == SDL_FALSE; // Referenz: Pixel 0 auch ohne Colorkey der Quelle
+                    if (n.Kind == 0 && n.Core != nullptr && n.Core->HdSurface != nullptr && n.TexScale > 1) {
+                        SDL_Texture *keyed = GetHdTextureFor(n.Core->HdSurface, n.Core->lpDDSurface, true, true);
+                        if (keyed != nullptr) {
+                            n.Tex = keyed;
+                            n.TexAlpha = HdAlphaTex.count(keyed) != 0;
+                        }
+                    }
+                }
                 n.ColorKey = true;
             }
             list->push_back(std::move(n));
@@ -1829,6 +1848,9 @@ SLONG SB_CPrimaryBitmap::BuildHdRef(const std::vector<SB_HdEntry> &list, SDL_Sur
         if (hasKey && !b.ColorKey) {
             SDL_SetColorKey(b.Src, SDL_FALSE, key);
         }
+        if (!hasKey && b.KeyZero) {
+            SDL_SetColorKey(b.Src, SDL_TRUE, 0); // wie der Colorkey-Blit der Offscreen-Bitmap (H14)
+        }
         if (dst.w != srcRect.w || dst.h != srcRect.h) {
             SDL_BlitScaled(b.Src, &srcRect, ref, &dst); // wie im Spiel (Zoom)
         } else {
@@ -1836,6 +1858,9 @@ SLONG SB_CPrimaryBitmap::BuildHdRef(const std::vector<SB_HdEntry> &list, SDL_Sur
         }
         if (hasKey && !b.ColorKey) {
             SDL_SetColorKey(b.Src, SDL_TRUE, key);
+        }
+        if (!hasKey && b.KeyZero) {
+            SDL_SetColorKey(b.Src, SDL_FALSE, 0);
         }
     }
     SDL_SetClipRect(ref, nullptr);
@@ -2508,6 +2533,10 @@ ULONG SB_CPrimaryBitmap::Release() {
         SDL_DestroyTexture(t.second);
     }
     HdTexCacheOpaque.clear();
+    for (auto &t : HdTexCacheMask1x) {
+        SDL_DestroyTexture(t.second);
+    }
+    HdTexCacheMask1x.clear();
     for (auto &t : HdGlowCache) {
         SDL_DestroyTexture(t.second);
     }

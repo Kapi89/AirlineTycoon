@@ -150,6 +150,7 @@ struct SB_HdEntry {
     Uint8 Alpha{255};                  // Deckkraft auf der GPU (BlitTrans)
     SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans), 4 Text-Hervorhebung
     bool Glyph{false};                 // Zeichen aus einem HD-Glyphenblatt (H7)
+    bool KeyZero{false};               // Pixel 0 der 1x-Quelle durchsichtig, obwohl die Quelle keinen Colorkey hat (H14)
     SDL_Texture *Tex2{nullptr};        // Kind 3: Weiss-Schicht (Alpha = Deckkraft)
     SDL_Texture *Tex3{nullptr};        // Kind 3: deckender Rest in 1x, Alpha = Maske fuer die HD-Inhalte
     std::shared_ptr<const std::vector<SB_HdEntry>> Sub; // Kind 3: HD-Inhalte der Quelle (in Quellkoordinaten)
@@ -337,7 +338,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
 
     // Zeichenliste (H4/H6): Blits von Bitmaps mit HD-Inhalt werden im Ziel mitgeschrieben (Primaerpuffer
     // oder Offscreen) und auf der GPU in HD nachgezeichnet.
-    SDL_Texture *GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey);
+    // mask1x: Alpha zusaetzlich aus den Pixeln 0 der 1x-Fassung (Colorkey-Blit einer zusammengesetzten Bitmap, H14)
+    SDL_Texture *GetHdTextureFor(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey, bool mask1x = false);
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
@@ -402,6 +404,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     std::vector<SB_HdEntry> HdDrawList; // gehoert zum Frame im Overlay, gilt fuer jedes Present bis zum naechsten Flip
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCache; // HD-Surface -> Textur (Maske aus dem Colorkey)
     std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCacheOpaque; // HD-Surface -> Textur ohne Colorkey-Maske
+    std::unordered_map<const SDL_Surface *, SDL_Texture *> HdTexCacheMask1x; // HD-Surface -> Alpha mal 1x-Colorkey-Maske (H14)
     std::unordered_set<const SDL_Texture *> HdAlphaTex;                // Texturen mit durchsichtigen Stellen
     std::unordered_set<SB_CBitmapCore *> HdTracked;                    // Offscreens mit Eintragsliste
     SDL_Surface *HdFullRef{};                                          // Referenz fuer den ganzen Frame
