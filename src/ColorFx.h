@@ -45,4 +45,8 @@ class SB_CColorFX {
     static void ReplayWhite(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
     void BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos);
     void HighlightText(SB_CBitmapCore *Bitmap, const CRect &Rect, UWORD FontColor, ULONG HighlightColor);
+    // Kern von HighlightText (ClipRect inklusive); auch zum Nachspielen auf der HD-Referenz (H12)
+    void HighlightRows(void *pixels, SLONG pitch, const CRect &ClipRect, UWORD FontColor, UWORD coloradd) const;
+    static void ReplayHighlight(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param,
+                                const void *ctx);
 };

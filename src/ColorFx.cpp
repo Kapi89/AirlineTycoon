@@ -796,17 +796,7 @@ void SB_CColorFX::ReplayTrans(SDL_Surface *target, const SDL_Rect &clip, SDL_Sur
 // Zeichnet einen transparenzen Highlight um einen Text:
 //--------------------------------------------------------------------------------------------
 void SB_CColorFX::HighlightText(SB_CBitmapCore *pBitmap, const CRect &HighRect, UWORD FontColor, ULONG HighlightColor) {
-    SLONG x = 0;
-    SLONG y = 0;
-    SLONG cx = 0;
-    SLONG cy = 0;
-    UWORD *p = nullptr;
-    UWORD *Table1 = BlendTables.getData() + (7 << 9);
     UWORD *Table2 = BlendTables.getData() + (1 << 9);
-    static SLONG sizex;
-    static SLONG sizey;
-
-    SLONG max = 3;
 
     // Calculate transparency color stuff:
     SB_Hardwarecolor color = pBitmap->GetHardwarecolor(HighlightColor);
@@ -830,19 +820,50 @@ void SB_CColorFX::HighlightText(SB_CBitmapCore *pBitmap, const CRect &HighRect, 
         ClipRect.bottom = HighRect.bottom;
     }
 
-    sizex = ClipRect.right - ClipRect.left + 1;
-    sizey = ClipRect.bottom - ClipRect.top + 1;
+    // HD (H12): vor der 1x-Rechnung melden (Leuchtrand aus dem noch unveraenderten Text)
+    if (ClipRect.right >= ClipRect.left && ClipRect.bottom >= ClipRect.top) {
+        const SDL_Rect r{ClipRect.left, ClipRect.top, ClipRect.right - ClipRect.left + 1, ClipRect.bottom - ClipRect.top + 1};
+        SB_RecordHdHighlight(pBitmap, r, FontColor, Uint32(HighlightColor & 0xFFFFFF), SLONG((ULONG(coloradd) << 16) | FontColor),
+                             &SB_CColorFX::ReplayHighlight, this);
+    }
 
     SB_CBitmapKey Key(*pBitmap);
     if (Key.Bitmap == nullptr) {
         return;
     }
+    HighlightRows(Key.Bitmap, Key.lPitch, ClipRect, FontColor, coloradd);
+}
 
-    SLONG Width = Key.lPitch / 2;
+void SB_CColorFX::ReplayHighlight(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect & /*srcRect*/, XY pos, SLONG param,
+                                  const void *ctx) {
+    const auto *fx = static_cast<const SB_CColorFX *>(ctx);
+    const SDL_Rect rect{pos.x, pos.y, src->w, src->h};
+    const SDL_Rect bounds{0, 0, target->w, target->h};
+    SDL_Rect r;
+    if (SDL_IntersectRect(&rect, &clip, &r) == SDL_FALSE || SDL_IntersectRect(&r, &bounds, &r) == SDL_FALSE) {
+        return;
+    }
+    SDL_LockSurface(target);
+    fx->HighlightRows(target->pixels, target->pitch, CRect(r.x, r.y, r.x + r.w - 1, r.y + r.h - 1), UWORD(ULONG(param) & 0xFFFF),
+                      UWORD(ULONG(param) >> 16));
+    SDL_UnlockSurface(target);
+}
+
+void SB_CColorFX::HighlightRows(void *pixels, SLONG pitch, const CRect &ClipRect, UWORD FontColor, UWORD coloradd) const {
+    SLONG x = 0;
+    SLONG y = 0;
+    SLONG cx = 0;
+    SLONG cy = 0;
+    UWORD *p = nullptr;
+    const UWORD *Table1 = BlendTables.getData() + (7 << 9);
+    const SLONG max = 3;
+    const SLONG sizex = ClipRect.right - ClipRect.left + 1;
+    const SLONG sizey = ClipRect.bottom - ClipRect.top + 1;
+    const SLONG Width = pitch / 2;
 
     if (sizex > 0) {
         for (cy = 0; cy < sizey; cy++) {
-            p = reinterpret_cast<UWORD *>((static_cast<char *>(Key.Bitmap)) + ClipRect.left * 2 + (cy + ClipRect.top) * Key.lPitch);
+            p = reinterpret_cast<UWORD *>((static_cast<char *>(pixels)) + ClipRect.left * 2 + (cy + ClipRect.top) * pitch);
 
             for (cx = sizex; cx > 0; cx--) {
                 if (*p == FontColor) {
