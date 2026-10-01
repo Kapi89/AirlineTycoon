@@ -76,11 +76,11 @@ static void CheckHallPainted() {
     }
     const XY &cam = Sim.Players.Players[Sim.localPlayer].ViewPos;
     if (count > 0) {
-        AT_Log_I("Rendering", "Breitbild-Test: %d Pixel der Halle nicht gezeichnet (Bild-x %d..%d, Ausschnitt x %d, x mod 320 = %d)", count, minX, maxX,
-                 cam.x, ((cam.x % 320) + 320) % 320);
+        AT_Log_I("Rendering", "Breitbild-Test: %d Pixel der Halle nicht gezeichnet (Bild-x %d..%d, Ausschnitt x %d, Bild-x 0 = Welt %d, Abschnitt-Rest %d)",
+                 count, minX, maxX, cam.x, cam.x - gHallMargin, (((cam.x - gHallMargin - Airport.LeftEnd) % 320) + 320) % 320);
     } else {
-        AT_Log_I("Rendering", "Breitbild-Test: Halle vollstaendig gezeichnet (Bild %d breit, Ausschnitt x %d, x mod 320 = %d)", frame->w, cam.x,
-                 ((cam.x % 320) + 320) % 320);
+        AT_Log_I("Rendering", "Breitbild-Test: Halle vollstaendig gezeichnet (Bild %d breit, Ausschnitt x %d, Abschnitt-Rest %d)", frame->w, cam.x,
+                 (((cam.x - gHallMargin - Airport.LeftEnd) % 320) + 320) % 320);
     }
 }
 
@@ -923,7 +923,7 @@ void AirportView::OnPaint() {
                                     if (Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].TypeId != -1) {
                                         PlaneTypes.BlitPlaneAt(PrimaryBm, Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].TypeId, 1,
                                                                Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].AirportPos -
-                                                                   XY(ViewPos.x / 2, 0) + XY(0, 14),
+                                                                   XY(CamPos.x / 2 - gHallMargin, 0) + XY(0, 14),
                                                                c);
                                     } else {
                                         Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].XPlane.BlitPlaneAt(
@@ -971,16 +971,18 @@ void AirportView::OnPaint() {
             if (Editor != EDITOR_NONE) {
                 pBuilds = &Airport.Builds;
             } else {
+                // Breitbild: Abschnitte, die bis zum rechten Bildrand reichen (4 x 320 ab dem linken Bildrand)
+                BUFFER_V<BUILDS> &hash = gHallMargin != 0 ? Airport.HashBuildsWide : Airport.HashBuilds;
                 SLONG Index = (ViewPos.x - Airport.LeftEnd) / BUILDHASHSIZE;
                 if (gHallMargin != 0) {
-                    Index = min(max(Index, SLONG(0)), Airport.HashBuilds.AnzEntries() - 1);
+                    Index = min(max(Index, SLONG(0)), hash.AnzEntries() - 1);
                 }
 
-                if (Index < 0 || Index >= Airport.HashBuilds.AnzEntries()) {
+                if (Index < 0 || Index >= hash.AnzEntries()) {
                     DebugBreak();
                 }
 
-                pBuilds = &Airport.HashBuilds[Index];
+                pBuilds = &hash[Index];
             }
 
             Bench.AdminTime.Start();
@@ -1436,7 +1438,7 @@ void AirportView::OnPaint() {
             }
 
             AmbientManager.SetVolume(AMBIENT_PEOPLE, LastAnzPeopleOnScreen * 2);
-            AmbientManager.SetVolume(AMBIENT_JET_FIELD, 150 - (Airport.RightEnd - (ViewPos.x + 320)) / 6);
+            AmbientManager.SetVolume(AMBIENT_JET_FIELD, 150 - (Airport.RightEnd - (CamPos.x + 320)) / 6);
 
             // Draw intuitive Walknet:
             if (Editor == EDITOR_LINKS) {
@@ -1860,7 +1862,7 @@ void AirportView::OnLButtonDown(UINT nFlags, CPoint point) {
                                 SLONG p = Sim.Persons[Sim.Persons.GetPlayerIndex(PlayerNum)].Position.x - Sim.Players.Players[PlayerNum].ViewPos.x;
 
                                 // Falls Person sichtbar, dann C&C-Scroll abschalten:
-                                if (p > -5 && p < 645) {
+                                if (p > -5 - gHallMargin && p < 645 + gHallMargin) {
                                     gMouseScroll = 0;
                                 }
 
@@ -4361,26 +4363,29 @@ void AIRPORT::UnassociateBuilds() {
 // Hasht die Builds in diverse Buckets:
 //--------------------------------------------------------------------------------------------
 void AIRPORT::DoHashBuilds() {
-    SLONG c = 0;
-    SLONG d = 0;
+    // Abschnitte je 320 Pixel: alle Builds, die in den 3 (bisher) bzw. 4 (Breitbild, H14c) Abschnitten ab hier liegen.
+    // Beide Tabellen immer, damit es nicht darauf ankommt, wann die Breitbild-Option gelesen wurde.
+    for (SLONG wide = 0; wide < 2; wide++) {
+        BUFFER_V<BUILDS> &hash = wide != 0 ? HashBuildsWide : HashBuilds;
+        const SLONG span = wide != 0 ? 4 : 3;
 
-    HashBuilds.ReSize(0);
-    HashBuilds.ReSize((RightEnd - LeftEnd) / BUILDHASHSIZE);
+        hash.ReSize(0);
+        hash.ReSize((RightEnd - LeftEnd) / BUILDHASHSIZE);
 
-    for (c = 0; c < HashBuilds.AnzEntries(); c++) {
-        HashBuilds[c].ReSize(Builds.AnzEntries());
+        for (SLONG c = 0; c < hash.AnzEntries(); c++) {
+            hash[c].ReSize(Builds.AnzEntries());
 
-        for (d = 0; d < Builds.AnzEntries(); d++) {
-            if (Builds.IsInAlbum(d) != 0) {
-                // Breitbild (H14): ein Abschnitt muss bis zu 320 + 854 Pixel weit reichen
-                if (Builds[d].ScreenPos.x + Bricks[Builds[d].BrickId].Bitmap[0].Size.x > LeftEnd + c * BUILDHASHSIZE &&
-                    Builds[d].ScreenPos.x <= LeftEnd + (c + (Sim.Options.OptionWidescreen != 0 ? 4 : 3)) * BUILDHASHSIZE) {
-                    HashBuilds[c] *= Builds[d];
+            for (SLONG d = 0; d < Builds.AnzEntries(); d++) {
+                if (Builds.IsInAlbum(d) != 0) {
+                    if (Builds[d].ScreenPos.x + Bricks[Builds[d].BrickId].Bitmap[0].Size.x > LeftEnd + c * BUILDHASHSIZE &&
+                        Builds[d].ScreenPos.x <= LeftEnd + (c + span) * BUILDHASHSIZE) {
+                        hash[c] *= Builds[d];
+                    }
                 }
             }
-        }
 
-        HashBuilds[c].ReSize(HashBuilds[c].GetNumUsed());
+            hash[c].ReSize(hash[c].GetNumUsed());
+        }
     }
 }
 
