@@ -85,19 +85,15 @@ steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
 - `OptionWidescreen` in der `AT.json`: `0` = aus (Standard, Bild wie bisher), `1` = an. Die Leinwand richtet sich
   nach dem Seitenverhaeltnis des Fensters: 16:10 (z. B. 2880x1800) -> 768x480, 16:9 -> 854x480, hoechstens 854.
 - Ab H14 nutzt die Flughafenhalle die ganze Leinwand; alle anderen Bildschirme bleiben 640 breit und stehen mittig
-  mit schwarzen Raendern. Statuszeile, Tooltips, Menues, Handy und Berater liegen in der Halle im mittleren
-  640er-Ausschnitt.
-- **Fuellung neben der Statuszeile** (nur Halle): `hd/misc/statusleiste_fuellung.png` neben der `AT.exe`,
-  Hoehe 40 x Render-Faktor (bei 4x: 160 Pixel), Breite beliebig (Vielfaches des Render-Faktors), wird links und
-  rechts der Statuszeile gekachelt. Fehlt die Datei, werden die aeusseren 8 Spalten der Statuszeile gestreckt
-  (Log: `Breitbild: ... fehlt`).
+  mit schwarzen Raendern. Menues und Dialoge liegen in der Halle im mittleren 640er-Ausschnitt.
+- Ab H15 reicht die Statuszeile in der Halle ueber die ganze Breite: linker Block und Inventar am linken, die rechte
+  Endkappe am rechten Bildrand, dazwischen weitere Rohrsegmente aus der Original-Grafik. Berater und Handy sitzen am
+  rechten Bildrand. Eine eigene Fuellungs-Grafik wird nicht mehr gebraucht.
 - Breitbild-Test (mit `OptionHdDebugMask` = 1): Die Halle wird vor dem Zeichnen mit Magenta gefuellt; alle 5 Sekunden
   steht im Log `Breitbild-Test: N Pixel der Halle nicht gezeichnet (Bild-x a..b, Ausschnitt x, x mod 320)` bzw.
   `Halle vollstaendig gezeichnet`.
 - Im Log stehen `Breitbild: Fenster WxH, Leinwand Wx480` und bei jedem Wechsel `Bildbreite alt -> neu`;
   die F11-Zeile nennt die Bildgroesse.
-- Noch offen (H15): Ueberblendung zwischen Halle und Raum (bis dahin direkter Wechsel), Handy/Berater am rechten
-  Bildrand, Sprechblasen von Personen im Randbereich.
 
 ### Welche HD-Grafiken fehlen noch?
 

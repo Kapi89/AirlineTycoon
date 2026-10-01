@@ -1368,11 +1368,13 @@ void SB_CPrimaryBitmap::MarkHdTouched(const SDL_Rect &r0) {
     }
 }
 
+// r in Bildkoordinaten (auch waehrend BeginView: die Touched-Map gilt fuer das ganze Bild)
 bool SB_CPrimaryBitmap::IsHdTouched(const SDL_Rect &r) const {
-    if (lpDDSurface == nullptr || HdTouched.empty()) {
+    const SDL_Surface *fs = ViewSurface != nullptr ? FullSurface : lpDDSurface;
+    if (fs == nullptr || HdTouched.empty()) {
         return false;
     }
-    const SDL_Rect full{0, 0, lpDDSurface->w, lpDDSurface->h};
+    const SDL_Rect full{0, 0, fs->w, fs->h};
     SDL_Rect a;
     if (SDL_IntersectRect(&r, &full, &a) == SDL_FALSE) {
         return false;
@@ -2502,12 +2504,15 @@ void SB_CPrimaryBitmap::ShiftHdEntries(SLONG dx) {
     }
 }
 
-void SB_CPrimaryBitmap::BeginView(SLONG ox) {
-    if (ox <= 0 || ViewSurface != nullptr || lpDDSurface == nullptr || Size.x - 2 * ox <= 0) {
+void SB_CPrimaryBitmap::BeginView(SLONG ox, SLONG w) {
+    if (w < 0) {
+        w = Size.x - 2 * ox;
+    }
+    if (ox <= 0 || ViewSurface != nullptr || lpDDSurface == nullptr || w <= 0 || ox + w > Size.x) {
         return;
     }
     SDL_Surface *v = SDL_CreateRGBSurfaceWithFormatFrom(static_cast<Uint8 *>(lpDDSurface->pixels) + ox * lpDDSurface->format->BytesPerPixel,
-                                                        Size.x - 2 * ox, lpDDSurface->h, lpDDSurface->format->BitsPerPixel, lpDDSurface->pitch,
+                                                        w, lpDDSurface->h, lpDDSurface->format->BitsPerPixel, lpDDSurface->pitch,
                                                         lpDDSurface->format->format);
     if (v == nullptr) {
         AT_Log("Bildfenster nicht angelegt: %s", SDL_GetError());
