@@ -55,6 +55,35 @@ extern SLONG SaveVersionSub;
 // hd/misc/statusleiste_fuellung.png neben der AT.exe (Hoehe 40 x Render-Faktor, wird gekachelt).
 // Fehlt sie, werden die aeusseren 8 Spalten der Statuszeile gestreckt.
 //--------------------------------------------------------------------------------------------
+// Breitbild-Test (H14b, mit OptionHdDebugMask): zaehlt Hallenpixel, die nach dem Zeichnen noch die Testfarbe haben
+static void CheckHallPainted() {
+    static SLONG lastLog = 0;
+    if (AtGetTime() - lastLog < 5000) {
+        return;
+    }
+    lastLog = AtGetTime();
+    SDL_Surface *frame = PrimaryBm.PrimaryBm.GetSurface();
+    SLONG count = 0, minX = frame->w, maxX = -1;
+    for (SLONG y = 0; y < 440 && y < frame->h; y++) {
+        const auto *row = reinterpret_cast<const UWORD *>(static_cast<const char *>(frame->pixels) + y * frame->pitch);
+        for (SLONG x = 0; x < frame->w; x++) {
+            if (row[x] == 0xF81F) {
+                count++;
+                minX = min(minX, x);
+                maxX = max(maxX, x);
+            }
+        }
+    }
+    const XY &cam = Sim.Players.Players[Sim.localPlayer].ViewPos;
+    if (count > 0) {
+        AT_Log_I("Rendering", "Breitbild-Test: %d Pixel der Halle nicht gezeichnet (Bild-x %d..%d, Ausschnitt x %d, x mod 320 = %d)", count, minX, maxX,
+                 cam.x, ((cam.x % 320) + 320) % 320);
+    } else {
+        AT_Log_I("Rendering", "Breitbild-Test: Halle vollstaendig gezeichnet (Bild %d breit, Ausschnitt x %d, x mod 320 = %d)", frame->w, cam.x,
+                 ((cam.x % 320) + 320) % 320);
+    }
+}
+
 static void DrawStatusLineFill() {
     if (gHallMargin <= 0 || StatusLineBms.AnzEntries() < 7) {
         return;
@@ -748,6 +777,15 @@ void AirportView::OnPaint() {
             // Sowas darf nur das Hauptfenster, was immer links oben ist:
             if ((Editor != 0) && WinP1.x == 0 && WinP1.y == 0) {
                 PrimaryBm.Clear(0x000000);
+            }
+
+            // Breitbild (H14b): Hallenbereich vor dem Zeichnen leeren, damit nichts vom letzten Bild stehen bleibt
+            // (1x und HD). Mit OptionHdDebugMask in Testfarbe Magenta; was danach noch Magenta ist, hat nichts gezeichnet.
+            if (gHallMargin != 0) {
+                SDL_Surface *frame = PrimaryBm.PrimaryBm.GetSurface();
+                SDL_Rect hall{0, 0, frame->w, 440};
+                SDL_FillRect(frame, &hall, Sim.Options.OptionHdDebugMask != 0 ? 0xF81F : 0);
+                static_cast<SB_CBitmapCore &>(PrimaryBm.PrimaryBm).HdWritten(&hall, true);
             }
 
             UnderCursor = 0xffffffff;
@@ -1462,6 +1500,10 @@ void AirportView::OnPaint() {
                     Bricks[EditObject].BlitAt(
                         PrimaryBm, 0, Bricks[EditObject].GetIntelligentPosition(gMousePosition.x + ViewPos.x, gMousePosition.y + ViewPos.y) - ViewPos, 0);
                 }
+            }
+
+            if (gHallMargin != 0 && Sim.Options.OptionHdDebugMask != 0) {
+                CheckHallPainted();
             }
 
             // Breitbild (H14): Fuellung neben der Statuszeile, dann die Oberflaeche im mittleren 640er-Ausschnitt

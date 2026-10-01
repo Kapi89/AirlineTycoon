@@ -25,6 +25,10 @@ extern SBBM gBlendBm;
 extern SBBM gBlendBm2;
 extern SLONG gBlendState;
 extern SLONG gHallMargin; // Breitbild (H14): Rand links/rechts der Halle neben dem mittleren 640er-Ausschnitt, sonst 0
+extern SLONG RightAirportClip;
+// Rechter Rand, bis zu dem in der Halle gezeichnet wird (Bildkoordinaten). Im Breitbild die ganze Bildbreite,
+// auch bei offenem Handy (die Halle laeuft dahinter weiter); sonst wie bisher RightAirportClip.
+inline SLONG HallRightClip() { return gHallMargin != 0 ? 640 + 2 * gHallMargin : RightAirportClip; }
 extern SLONG gFramesToDrawBeforeFirstBlend;
 
 //--------------------------------------------------------------------------------------------

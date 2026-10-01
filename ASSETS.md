@@ -91,6 +91,9 @@ steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
   Hoehe 40 x Render-Faktor (bei 4x: 160 Pixel), Breite beliebig (Vielfaches des Render-Faktors), wird links und
   rechts der Statuszeile gekachelt. Fehlt die Datei, werden die aeusseren 8 Spalten der Statuszeile gestreckt
   (Log: `Breitbild: ... fehlt`).
+- Breitbild-Test (mit `OptionHdDebugMask` = 1): Die Halle wird vor dem Zeichnen mit Magenta gefuellt; alle 5 Sekunden
+  steht im Log `Breitbild-Test: N Pixel der Halle nicht gezeichnet (Bild-x a..b, Ausschnitt x, x mod 320)` bzw.
+  `Halle vollstaendig gezeichnet`.
 - Im Log stehen `Breitbild: Fenster WxH, Leinwand Wx480` und bei jedem Wechsel `Bildbreite alt -> neu`;
   die F11-Zeile nennt die Bildgroesse.
 - Noch offen (H15): Ueberblendung zwischen Halle und Raum (bis dahin direkter Wechsel), Handy/Berater am rechten
