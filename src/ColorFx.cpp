@@ -298,7 +298,7 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *DestBitmap, SLONG Step2, 
     UWORD *Table = BlendTables.getData() + (Step << 9);
     UWORD *Table2 = BlendTables.getData() + (Step2 << 9);
     static SLONG sizex;
-    BUFFER_V<UWORD> PixelBuffer(640);
+    BUFFER_V<UWORD> PixelBuffer(max(SLONG(640), DestBitmap->GetXSize()));
 
     SB_CBitmapKey Key(*DestBitmap);
     SB_CBitmapKey Key2(*SrcBitmap2);
@@ -306,7 +306,7 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *DestBitmap, SLONG Step2, 
         return;
     }
 
-    sizex = DestBitmap->GetXSize();
+    sizex = min(DestBitmap->GetXSize(), SrcBitmap2->GetXSize()); // Breitbild: Bitmaps koennen verschieden breit sein
 
     CRect ClipRect = DestBitmap->GetClipRect();
 
@@ -412,6 +412,7 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *SrcBitmap, SLONG Step2, S
     }
 
     CRect ClipRect = TgtBitmap->GetClipRect();
+    ClipRect.bottom = min(ClipRect.bottom, min(SrcBitmap->GetYSize(), SrcBitmap2->GetYSize()));
 
     for (cy = ClipRect.top; cy < ClipRect.bottom; cy++) {
         p = reinterpret_cast<UWORD *>((static_cast<char *>(Key.Bitmap)) + cy * Key.lPitch);
@@ -468,7 +469,8 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *SrcBitmap, SLONG Step2, S
                 pop   ebp
         }
 #else
-        sizex = SrcBitmap->GetXSize();
+        // Breitbild: nie ueber die schmalste der drei Bitmaps hinaus (z. B. Ueberblendung Halle -> Raum)
+        sizex = min(min(SrcBitmap->GetXSize(), SrcBitmap2->GetXSize()), TgtBitmap->GetXSize());
 
         for (cx = sizex; cx > 0; cx--) {
             *ppp = Table[(reinterpret_cast<UBYTE *>(p))[0]] + Table[256 + (reinterpret_cast<UBYTE *>(p))[1]] + Table2[(reinterpret_cast<UBYTE *>(pp))[0]] +
@@ -919,7 +921,7 @@ void SB_CColorFX::BlitAlpha(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap
     if (SrcBitmap == nullptr) {
         return;
     }
-    if (TargetPos.x >= 640 || TargetPos.x + SrcBitmap->GetXSize() < 0) {
+    if (TargetPos.x >= max(SLONG(640), TgtBitmap->GetXSize()) || TargetPos.x + SrcBitmap->GetXSize() < 0) {
         return;
     }
     if (SrcBitmap->GetXSize() <= 0 || SrcBitmap->GetXSize() >= 640) {
@@ -996,7 +998,7 @@ void SB_CColorFX::ReplayAlpha(SDL_Surface *target, const SDL_Rect &clip, SDL_Sur
 // Blitten mit Glow-Effekt fürs Tutorial:
 //--------------------------------------------------------------------------------------------
 void SB_CColorFX::BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap, const XY &TargetPos) {
-    if (TargetPos.x >= 640 || TargetPos.x + SrcBitmap->GetXSize() < 0) {
+    if (TargetPos.x >= max(SLONG(640), TgtBitmap->GetXSize()) || TargetPos.x + SrcBitmap->GetXSize() < 0) {
         return;
     }
 

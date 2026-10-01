@@ -243,8 +243,9 @@ void GameFrame::UpdateFrameSize() const {
 void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
     if (Sim.Options.OptionWidescreen != 0) {
         // Fenster (Renderer-Koordinaten) -> Bild; das Bild liegt mittig in der Leinwand
+        // Spiel-Koordinaten bleiben die des mittleren 640er-Ausschnitts (Halle: auch links davon negativ)
         const XY g = PrimaryBm.PrimaryBm.WindowToGame(XY(p->x, p->y));
-        p->x = g.x;
+        p->x = g.x - gHallMargin;
         p->y = g.y;
         return;
     }
@@ -274,7 +275,7 @@ void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
 
 void GameFrame::TranslatePointToScreenSpace(SLONG &x, SLONG &y) const {
     if (Sim.Options.OptionWidescreen != 0) {
-        const XY w = PrimaryBm.PrimaryBm.GameToWindow(XY(x, y));
+        const XY w = PrimaryBm.PrimaryBm.GameToWindow(XY(x + gHallMargin, y));
         x = w.x;
         y = w.y;
         return;
@@ -606,6 +607,28 @@ void GameFrame::Invalidate() {
     CStdRaum *w = nullptr;
     SLONG c = 0;
 
+    // Breitbild (H14): die Halle nutzt die ganze Leinwand, alle anderen Bildschirme bleiben 640 breit
+    if (Sim.Options.OptionWidescreen != 0) {
+        SLONG frameW = 640;
+        CStdRaum *loc = Sim.localPlayer >= 0 && Sim.localPlayer < 4 ? Sim.Players.Players[Sim.localPlayer].LocationWin : nullptr;
+        if (TopWin == nullptr && loc != nullptr && loc->WantsWideFrame() != 0) {
+            frameW = max(SLONG(640), SB_GetCanvasWidth());
+        }
+        if (frameW != PrimaryBm.Size.x) {
+            PrimaryBm.SetFrameWidth(frameW);
+            if (loc != nullptr) {
+                loc->StatusCount = max(loc->StatusCount, SLONG(3)); // Statuszeile im neuen Bild neu zeichnen
+            }
+            if (gBlendState != -1) {
+                // Ueberblendung zwischen verschieden breiten Bildern gibt es noch nicht (H15): direkt umschalten
+                gBlendState = -1;
+                gBlendBm.Destroy();
+                gBlendBm2.Destroy();
+            }
+        }
+        gHallMargin = (PrimaryBm.Size.x - 640) / 2;
+    }
+
     if (TopWin != nullptr) {
         TopWin->OnPaint();
     } else {
@@ -883,6 +906,8 @@ void GameFrame::OnPaint() {
     }
     if ((bActive != 0) && (Sim.bPause != 0)) {
         TXY<SLONG> rcWindow;
+
+        PrimaryBm.PrimaryBm.BeginView(gHallMargin); // Breitbild (H14): Pausenbild mittig, die Halle bleibt daneben stehen
 
         if (pGLibPause == nullptr) {
             pGfxMain->LoadLib(const_cast<char *>((LPCTSTR)FullFilename("pause.gli", RoomPath)), &pGLibPause, L_LOCMEM);

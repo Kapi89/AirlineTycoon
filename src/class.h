@@ -2381,6 +2381,7 @@ class AIRPORT {
   public:
     BUILDS Builds;
     BUFFER_V<BUILDS> HashBuilds;
+    BUFFER_V<BUILDS> HashBuildsWide; // Breitbild (H14c): Abschnitte 4 x 320 statt 3 x 320 breit
     SLONG LeftEnd{}, RightEnd{};
     BUFFER_V<SLONG> GateMapper;
     SLONG NumBeltSpots{}; // Zahl der Stehplätze beim Gepäckband

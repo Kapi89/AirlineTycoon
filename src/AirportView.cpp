@@ -51,6 +51,84 @@ extern SLONG SaveVersion;
 extern SLONG SaveVersionSub;
 
 //--------------------------------------------------------------------------------------------
+// Breitbild (H14): Fuellung links und rechts neben der 640 breiten Statuszeile. Eigene Grafik:
+// hd/misc/statusleiste_fuellung.png neben der AT.exe (Hoehe 40 x Render-Faktor, wird gekachelt).
+// Fehlt sie, werden die aeusseren 8 Spalten der Statuszeile gestreckt.
+//--------------------------------------------------------------------------------------------
+// Breitbild-Test (H14b, mit OptionHdDebugMask): zaehlt Hallenpixel, die nach dem Zeichnen noch die Testfarbe haben
+static void CheckHallPainted() {
+    static SLONG lastLog = 0;
+    if (AtGetTime() - lastLog < 5000) {
+        return;
+    }
+    lastLog = AtGetTime();
+    SDL_Surface *frame = PrimaryBm.PrimaryBm.GetSurface();
+    SLONG count = 0, minX = frame->w, maxX = -1;
+    for (SLONG y = 0; y < 440 && y < frame->h; y++) {
+        const auto *row = reinterpret_cast<const UWORD *>(static_cast<const char *>(frame->pixels) + y * frame->pitch);
+        for (SLONG x = 0; x < frame->w; x++) {
+            if (row[x] == 0xF81F) {
+                count++;
+                minX = min(minX, x);
+                maxX = max(maxX, x);
+            }
+        }
+    }
+    const XY &cam = Sim.Players.Players[Sim.localPlayer].ViewPos;
+    if (count > 0) {
+        AT_Log_I("Rendering", "Breitbild-Test: %d Pixel der Halle nicht gezeichnet (Bild-x %d..%d, Ausschnitt x %d, Bild-x 0 = Welt %d, Abschnitt-Rest %d)",
+                 count, minX, maxX, cam.x, cam.x - gHallMargin, (((cam.x - gHallMargin - Airport.LeftEnd) % 320) + 320) % 320);
+    } else {
+        AT_Log_I("Rendering", "Breitbild-Test: Halle vollstaendig gezeichnet (Bild %d breit, Ausschnitt x %d, Abschnitt-Rest %d)", frame->w, cam.x,
+                 (((cam.x - gHallMargin - Airport.LeftEnd) % 320) + 320) % 320);
+    }
+}
+
+static void DrawStatusLineFill() {
+    if (gHallMargin <= 0 || StatusLineBms.AnzEntries() < 7) {
+        return;
+    }
+    static SB_CBitmapCore *fill = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        const CString path = AppPath + "hd/misc/statusleiste_fuellung.png";
+        if (bitmapMain->CreateBitmapFromHdPng(&fill, path.c_str(), 40) != 0) {
+            fill = nullptr;
+            AT_Log_I("Rendering", "Breitbild: %s fehlt, Statuszeile wird an den Raendern gestreckt", path.c_str());
+        }
+    }
+    const SLONG m = gHallMargin;
+    const SLONG y = 440;
+    SB_CPrimaryBitmap &prim = PrimaryBm.PrimaryBm;
+    if (fill != nullptr && fill->GetXSize() > 0) {
+        const SLONG tw = fill->GetXSize();
+        prim.SetClipRect(CRect(0, y, m, y + 40));
+        for (SLONG x = m - tw; x > -tw; x -= tw) {
+            fill->BlitFast(&prim, x, y);
+        }
+        prim.SetClipRect(CRect(m + 640, y, m * 2 + 640, y + 40));
+        for (SLONG x = m + 640; x < m * 2 + 640; x += tw) {
+            fill->BlitFast(&prim, x, y);
+        }
+    } else {
+        prim.SetClipRect(CRect(0, 0, m * 2 + 640, 480));
+        SB_CBitmapCore *left = StatusLineBms[0].pBitmap;
+        SB_CBitmapCore *right = StatusLineBms[6].pBitmap;
+        if (left != nullptr && left->GetXSize() >= 8) {
+            left->BlitScaled(&prim, SDL_Rect{0, 0, 8, min(SLONG(40), left->GetYSize())}, SDL_Rect{0, y, m, 40});
+        }
+        if (right != nullptr && right->GetXSize() >= 8) {
+            right->BlitScaled(&prim, SDL_Rect{right->GetXSize() - 8, 0, 8, min(SLONG(40), right->GetYSize())}, SDL_Rect{m + 640, y, m, 40});
+        }
+    }
+    prim.SetClipRect(CRect(0, 0, m * 2 + 640, 480));
+}
+
+// Breitbild (H14): die Halle nutzt die ganze Leinwand, der Hallen-Editor bleibt 640 breit
+BOOL AirportView::WantsWideFrame() const { return static_cast<BOOL>(Editor == EDITOR_NONE); }
+
+//--------------------------------------------------------------------------------------------
 // AirportView::AirportView():
 //--------------------------------------------------------------------------------------------
 AirportView::AirportView(BOOL bHandy, ULONG PlayerNum) : CStdRaum(bHandy, PlayerNum, "", 0) {
@@ -113,6 +191,11 @@ AirportView::~AirportView() {
 // Lädt die Bitmap neu:
 //--------------------------------------------------------------------------------------------
 void AirportView::ReloadBitmaps() {}
+
+// Breitbild (H14): Grenzen fuer den linken Rand des mittleren 640er-Ausschnitts. Mit gHallMargin breiterem Bild
+// bleibt der sichtbare Bereich so innerhalb dessen, was man ohne Breitbild sehen konnte.
+static SLONG HallLeftEnd() { return Airport.LeftEnd + gHallMargin; }
+static SLONG HallRightEnd() { return Airport.RightEnd - gHallMargin; }
 
 //--------------------------------------------------------------------------------------------
 // Setzt die aktuelle Kameraposition
@@ -199,11 +282,11 @@ void AirportView::FocusCameraOnPos(XY Pos, BOOL Speed) {
 
     if (gMouseScroll != 0) {
         ViewPos.x += gMouseScrollSpeed;
-        if (ViewPos.x < Airport.LeftEnd) {
-            ViewPos.x = Airport.LeftEnd;
+        if (ViewPos.x < HallLeftEnd()) {
+            ViewPos.x = HallLeftEnd();
         }
-        if (ViewPos.x + 320 > Airport.RightEnd) {
-            ViewPos.x = Airport.RightEnd - 320;
+        if (ViewPos.x + 320 > HallRightEnd()) {
+            ViewPos.x = HallRightEnd() - 320;
         }
         if (ViewPos.x < -1000) {
             DebugBreak();
@@ -231,11 +314,11 @@ void AirportView::FocusCameraOnPos(XY Pos, BOOL Speed) {
                 ViewPos.x = Pos.x - 100;
             }
 
-            if (ViewPos.x < Airport.LeftEnd) {
-                ViewPos.x = Airport.LeftEnd;
+            if (ViewPos.x < HallLeftEnd()) {
+                ViewPos.x = HallLeftEnd();
             }
-            if (ViewPos.x + SizeX > Airport.RightEnd) {
-                ViewPos.x = Airport.RightEnd - SizeX;
+            if (ViewPos.x + SizeX > HallRightEnd()) {
+                ViewPos.x = HallRightEnd() - SizeX;
             }
 
             if (ViewPos.x < -1000) {
@@ -293,11 +376,11 @@ void AirportView::FocusCameraOnPos(XY Pos, BOOL Speed) {
             SLONG UncorrectedPosX = Pos.x;
 
             // Horizonzale Begrenzung
-            if (Pos.x < Airport.LeftEnd) {
-                Pos.x = Airport.LeftEnd;
+            if (Pos.x < HallLeftEnd()) {
+                Pos.x = HallLeftEnd();
             }
-            if (Pos.x + SizeX > Airport.RightEnd) {
-                Pos.x = Airport.RightEnd - SizeX;
+            if (Pos.x + SizeX > HallRightEnd()) {
+                Pos.x = HallRightEnd() - SizeX;
             }
 
             // Spielfigur in Y-Richtung zentrieren:
@@ -387,8 +470,8 @@ void AirportView::FocusCameraOnPos(XY Pos, BOOL Speed) {
                 LastScrollTime = AtGetTime();
             }
             ViewPos += CameraSpeed;
-            if (ViewPos.x < Airport.LeftEnd) {
-                ViewPos.x = Airport.LeftEnd;
+            if (ViewPos.x < HallLeftEnd()) {
+                ViewPos.x = HallLeftEnd();
             }
 
             AcceptedCameraSpeedX = CameraSpeed.x; // new!
@@ -396,19 +479,19 @@ void AirportView::FocusCameraOnPos(XY Pos, BOOL Speed) {
     }
 
     // Wenn man ganz rechts ist, darf man nicht, nach oben gescrollt haben:
-    if (ViewPos.y < 0 && ViewPos.x > ((Airport.LeftEnd + Airport.RightEnd * 4) / 5)) {
+    if (ViewPos.y < 0 && ViewPos.x > ((HallLeftEnd() + HallRightEnd() * 4) / 5)) {
         ViewPos.y++;
     }
-    if (ViewPos.x > Airport.RightEnd - 800) {
+    if (ViewPos.x > HallRightEnd() - 800) {
         ViewPos.y = 0;
     }
 
     // Horizonzale Begrenzung:
-    if (ViewPos.x < Airport.LeftEnd) {
-        ViewPos.x = Airport.LeftEnd;
+    if (ViewPos.x < HallLeftEnd()) {
+        ViewPos.x = HallLeftEnd();
     }
-    if (ViewPos.x + SizeX > Airport.RightEnd) {
-        ViewPos.x = Airport.RightEnd - SizeX;
+    if (ViewPos.x + SizeX > HallRightEnd()) {
+        ViewPos.x = HallRightEnd() - SizeX;
     }
 
     if (ViewPos.x < -1000) {
@@ -500,11 +583,11 @@ void AirportView::CenterCameraOnPlayer() {
 
             ViewPos.x = PosX - SizeX;
 
-            if (ViewPos.x < Airport.LeftEnd) {
-                ViewPos.x = Airport.LeftEnd;
+            if (ViewPos.x < HallLeftEnd()) {
+                ViewPos.x = HallLeftEnd();
             }
-            if (ViewPos.x + SizeX > Airport.RightEnd) {
-                ViewPos.x = Airport.RightEnd - SizeX;
+            if (ViewPos.x + SizeX > HallRightEnd()) {
+                ViewPos.x = HallRightEnd() - SizeX;
             }
 
             if (ViewPos.x < -1000) {
@@ -531,7 +614,15 @@ void AirportView::OnPaint() {
     ULONG t2 = 0;
     static UBYTE FlackerCount = 0;
     static SLONG ParallaxIndex[5] = {-1, -1, -1, -1, -1}; // Die direkten Brick Indices fürs Paralax
-    XY &ViewPos = Sim.Players.Players[PlayerNum].ViewPos;
+    XY &CamPos = Sim.Players.Players[PlayerNum].ViewPos;
+    // Breitbild (H14): CamPos ist der linke Rand des mittleren 640er-Ausschnitts (Maus, Oberflaeche); gezeichnet wird
+    // die Halle ab dem linken Bildrand, gHallMargin weiter links (ohne Breitbild ist beides gleich)
+    if (gHallMargin != 0) {
+        // nach dem Wechsel auf das breite Bild: Ausschnitt in die Grenzen holen (sonst liegt der Rand vor LeftEnd)
+        CamPos.x = min(max(CamPos.x, HallLeftEnd()), HallRightEnd() - 160); // 160: Kamera bei offenem Handy
+    }
+    const XY ViewPos = CamPos - XY(gHallMargin, 0);
+    const SLONG FrameW = 640 + 2 * gHallMargin;
 
     if (ViewPos.x < -1000) {
         DebugBreak();
@@ -560,7 +651,7 @@ void AirportView::OnPaint() {
     SLONG KioskerIndexZ = Bricks(static_cast<SLONG>(0x10000000) + 852);
     SLONG RouteBoxIndex = Bricks(static_cast<SLONG>(0x10000000) + 421);
 
-    SLONG RightClip = 640;
+    SLONG RightClip = FrameW;
 
     SLONG cnt = 0;
     for (c = 0; c < static_cast<ULONG>(Sim.AirportSmacks.AnzEntries()); c++) {
@@ -591,7 +682,8 @@ void AirportView::OnPaint() {
     }
 
     if ((Sim.Players.Players[Sim.localPlayer].DialogWin != nullptr) && ((Sim.Players.Players[Sim.localPlayer].DialogWin)->bHandy != 0)) {
-        RightClip = (Sim.Players.Players[Sim.localPlayer].DialogWin)->TempScreenScroll;
+        // Breitbild: die Halle laeuft hinter dem Handy weiter (es liegt im mittleren Ausschnitt)
+        RightClip = gHallMargin != 0 ? FrameW : (Sim.Players.Players[Sim.localPlayer].DialogWin)->TempScreenScroll;
     }
 
     SLONG DoorOpenTab[10];
@@ -687,6 +779,15 @@ void AirportView::OnPaint() {
                 PrimaryBm.Clear(0x000000);
             }
 
+            // Breitbild (H14b): Hallenbereich vor dem Zeichnen leeren, damit nichts vom letzten Bild stehen bleibt
+            // (1x und HD). Mit OptionHdDebugMask in Testfarbe Magenta; was danach noch Magenta ist, hat nichts gezeichnet.
+            if (gHallMargin != 0) {
+                SDL_Surface *frame = PrimaryBm.PrimaryBm.GetSurface();
+                SDL_Rect hall{0, 0, frame->w, 440};
+                SDL_FillRect(frame, &hall, Sim.Options.OptionHdDebugMask != 0 ? 0xF81F : 0);
+                static_cast<SB_CBitmapCore &>(PrimaryBm.PrimaryBm).HdWritten(&hall, true);
+            }
+
             UnderCursor = 0xffffffff;
 
             // Under-Cursor Berechnung:
@@ -753,7 +854,7 @@ void AirportView::OnPaint() {
                         }
 
                         if (sizes[0] + sizes[1] > 0) {
-                            for (d = 640 / (sizes[0] + sizes[1]) + 2; d >= 0; d--) {
+                            for (d = FrameW / (sizes[0] + sizes[1]) + 2; d >= 0; d--) {
                                 BrickWait[ParallaxIndex[0]].Start();
                                 Bricks[ParallaxIndex[0]].BlitAt(PrimaryBm, 0,
                                                                 ((100000 - (ViewPos.x * 16)) >> 6) % (sizes[0] + sizes[1]) - (sizes[0] + sizes[1]) +
@@ -768,7 +869,7 @@ void AirportView::OnPaint() {
                         }
 
                         if (sizes[2] > 0) {
-                            for (d = 640 / sizes[2] + 2; d >= 0; d--) {
+                            for (d = FrameW / sizes[2] + 2; d >= 0; d--) {
                                 BrickWait[ParallaxIndex[2]].Start();
                                 Bricks[ParallaxIndex[2]].BlitAt(PrimaryBm, 0, ((100000 - (ViewPos.x * 30)) >> 6) % sizes[2] - sizes[2] + d * sizes[2],
                                                                 WinP1.y - 18 + 18 + 34);
@@ -777,7 +878,7 @@ void AirportView::OnPaint() {
                         }
 
                         if (sizes[3] > 0) {
-                            for (d = 640 / sizes[3] + 2; d >= 0; d--) {
+                            for (d = FrameW / sizes[3] + 2; d >= 0; d--) {
                                 BrickWait[ParallaxIndex[3]].Start();
                                 Bricks[ParallaxIndex[3]].BlitAt(PrimaryBm, 0, ((100000 - (ViewPos.x * 42)) >> 6) % sizes[3] - sizes[3] + d * sizes[3],
                                                                 WinP1.y - 18 + 18 + 34 + 44);
@@ -786,7 +887,7 @@ void AirportView::OnPaint() {
                         }
 
                         if (sizes[4] > 0) {
-                            for (d = 640 / sizes[4] + 2; d >= 0; d--) {
+                            for (d = FrameW / sizes[4] + 2; d >= 0; d--) {
                                 BrickWait[ParallaxIndex[4]].Start();
                                 Bricks[ParallaxIndex[4]].BlitAt(PrimaryBm, 0, ((100000 - (ViewPos.x * 56)) >> 6) % sizes[4] - sizes[4] + d * sizes[4],
                                                                 WinP1.y - 18 + 18 + 34 + 44 + 72);
@@ -797,7 +898,7 @@ void AirportView::OnPaint() {
 
                     RangeDrawn = Airport.ClipMarkers[c].Position;
 
-                    if (RangeDrawn >= ViewPos.x + 640) {
+                    if (RangeDrawn >= ViewPos.x + FrameW) {
                         break;
                     }
                 }
@@ -822,7 +923,7 @@ void AirportView::OnPaint() {
                                     if (Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].TypeId != -1) {
                                         PlaneTypes.BlitPlaneAt(PrimaryBm, Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].TypeId, 1,
                                                                Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].AirportPos -
-                                                                   XY(ViewPos.x / 2, 0) + XY(0, 14),
+                                                                   XY(CamPos.x / 2 - gHallMargin, 0) + XY(0, 14),
                                                                c);
                                     } else {
                                         Sim.Players.Players[static_cast<SLONG>(c)].Planes[static_cast<SLONG>(d)].XPlane.BlitPlaneAt(
@@ -870,13 +971,18 @@ void AirportView::OnPaint() {
             if (Editor != EDITOR_NONE) {
                 pBuilds = &Airport.Builds;
             } else {
+                // Breitbild: Abschnitte, die bis zum rechten Bildrand reichen (4 x 320 ab dem linken Bildrand)
+                BUFFER_V<BUILDS> &hash = gHallMargin != 0 ? Airport.HashBuildsWide : Airport.HashBuilds;
                 SLONG Index = (ViewPos.x - Airport.LeftEnd) / BUILDHASHSIZE;
+                if (gHallMargin != 0) {
+                    Index = min(max(Index, SLONG(0)), hash.AnzEntries() - 1);
+                }
 
-                if (Index < 0 || Index >= Airport.HashBuilds.AnzEntries()) {
+                if (Index < 0 || Index >= hash.AnzEntries()) {
                     DebugBreak();
                 }
 
-                pBuilds = &Airport.HashBuilds[Index];
+                pBuilds = &hash[Index];
             }
 
             Bench.AdminTime.Start();
@@ -1239,7 +1345,7 @@ void AirportView::OnPaint() {
                                     }
                                 }
 
-                                PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, 640, 440));
+                                PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, FrameW, 440));
                             }
 
                             if (Editor == EDITOR_BUILDS &&
@@ -1298,8 +1404,7 @@ void AirportView::OnPaint() {
                 SLONG PlayerIndex = Sim.Persons.GetPlayerIndex(PlayerNum);
 
                 if (PlayerIndex != -1 && Sim.Persons[PlayerIndex].Dir < 8) {
-                    if (Sim.Persons[PlayerIndex].Position.x < Sim.Players.Players[PlayerNum].ViewPos.x - 40 ||
-                        Sim.Persons[PlayerIndex].Position.x > Sim.Players.Players[PlayerNum].ViewPos.x + 650) {
+                    if (Sim.Persons[PlayerIndex].Position.x < CamPos.x - 40 - gHallMargin || Sim.Persons[PlayerIndex].Position.x > CamPos.x + 650 + gHallMargin) {
                         if (Sim.Persons[PlayerIndex].Dir == 1 || Sim.Persons[PlayerIndex].Dir == 2 || Sim.Persons[PlayerIndex].Dir == 3) {
                             gShowCursorFeet = 0;
                         } else if (Sim.Persons[PlayerIndex].Dir == 5 || Sim.Persons[PlayerIndex].Dir == 6 || Sim.Persons[PlayerIndex].Dir == 7) {
@@ -1333,7 +1438,7 @@ void AirportView::OnPaint() {
             }
 
             AmbientManager.SetVolume(AMBIENT_PEOPLE, LastAnzPeopleOnScreen * 2);
-            AmbientManager.SetVolume(AMBIENT_JET_FIELD, 150 - (Airport.RightEnd - (ViewPos.x + 320)) / 6);
+            AmbientManager.SetVolume(AMBIENT_JET_FIELD, 150 - (Airport.RightEnd - (CamPos.x + 320)) / 6);
 
             // Draw intuitive Walknet:
             if (Editor == EDITOR_LINKS) {
@@ -1399,6 +1504,19 @@ void AirportView::OnPaint() {
                 }
             }
 
+            if (gHallMargin != 0 && Sim.Options.OptionHdDebugMask != 0) {
+                CheckHallPainted();
+            }
+
+            // Breitbild (H14): Fuellung neben der Statuszeile, dann die Oberflaeche im mittleren 640er-Ausschnitt
+            DrawStatusLineFill();
+            struct ViewGuard {
+                explicit ViewGuard(SLONG ox) { PrimaryBm.PrimaryBm.BeginView(ox); }
+                ~ViewGuard() { PrimaryBm.PrimaryBm.EndView(); }
+                ViewGuard(const ViewGuard &) = delete;
+                ViewGuard &operator=(const ViewGuard &) = delete;
+            } viewGuard(gHallMargin);
+
             PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, 640, 480));
 
             // Die Statuszeile mit ihren Anzeigen...
@@ -1407,7 +1525,7 @@ void AirportView::OnPaint() {
 
             if ((IsDialogOpen() == 0) && (MenuIsOpen() == 0) && Editor == EDITOR_NONE && (MouseWait == 0)) {
                 // Die Transparenten Maus-Tips:
-                c = Airport.IsInMarkedArea(gMousePosition + ViewPos);
+                c = Airport.IsInMarkedArea(gMousePosition + CamPos);
                 if (c == ROOM_WALL) {
                     c = 0; // Die Kindersicherung für die Wall-Eigenschaft
                 }
@@ -1446,10 +1564,10 @@ void AirportView::OnPaint() {
                 }
             }
             if ((IsDialogOpen() == 0) && (MenuIsOpen() == 0) && (Sim.bPause == 0) && gMousePosition.y < 440) {
-                if (gMousePosition.x <= 10 && ViewPos.x > Airport.LeftEnd) {
+                if (gMousePosition.x <= 10 - gHallMargin && CamPos.x > Airport.LeftEnd + gHallMargin) {
                     SetMouseLook(CURSOR_LEFT, 0, ROOM_AIRPORT, 6010);
                 }
-                if (gMousePosition.x >= 630 && ViewPos.x + 320 < Airport.RightEnd) {
+                if (gMousePosition.x >= 630 + gHallMargin && CamPos.x + 320 < Airport.RightEnd - gHallMargin) {
                     SetMouseLook(CURSOR_RIGHT, 0, ROOM_AIRPORT, 6011);
                 }
             }
@@ -1521,7 +1639,9 @@ void AirportView::OnLButtonDown(UINT nFlags, CPoint point) {
     }
 
     // Ist das Fenster hier zuständig? Ist der Klick in diesem Fenster?
-    if (point.x >= WinP1.x && point.x <= WinP2.x && point.y >= WinP1.y && point.y <= WinP2.y - StatusLineSizeY * static_cast<SLONG>(Editor == 0)) {
+    // Breitbild (H14): die Halle reicht links und rechts um gHallMargin ueber den 640er-Ausschnitt hinaus
+    if (point.x >= WinP1.x - gHallMargin && point.x <= WinP2.x + gHallMargin && point.y >= WinP1.y &&
+        point.y <= WinP2.y - StatusLineSizeY * static_cast<SLONG>(Editor == 0)) {
         LButtonState = TRUE;
 
         point.x -= WinP1.x;
@@ -1742,7 +1862,7 @@ void AirportView::OnLButtonDown(UINT nFlags, CPoint point) {
                                 SLONG p = Sim.Persons[Sim.Persons.GetPlayerIndex(PlayerNum)].Position.x - Sim.Players.Players[PlayerNum].ViewPos.x;
 
                                 // Falls Person sichtbar, dann C&C-Scroll abschalten:
-                                if (p > -5 && p < 645) {
+                                if (p > -5 - gHallMargin && p < 645 + gHallMargin) {
                                     gMouseScroll = 0;
                                 }
 
@@ -1829,7 +1949,7 @@ void AirportView::OnLButtonUp(UINT /*nFlags*/, CPoint point) {
     }
 
     // Ist das Fenster hier zuständig? Ist der Klick in diesem Fenster?
-    if (point.x >= WinP1.x && point.x <= WinP2.x && point.y >= WinP1.y && point.y <= WinP2.y && (MenuIsOpen() == 0)) {
+    if (point.x >= WinP1.x - gHallMargin && point.x <= WinP2.x + gHallMargin && point.y >= WinP1.y && point.y <= WinP2.y && (MenuIsOpen() == 0)) {
         if (AtGetTime() - gMouseLButtonDownTimer < 500 && (gMouseScroll != 0) && (Editor == 0) && gMousePosition.y < 440 && (MouseWait == 0)) {
             if (Sim.Players.Players[PlayerNum].IsWalking2Player == -1 && (IsDialogOpen() == 0)) {
                 // gMouseScroll=0;
@@ -1848,7 +1968,7 @@ void AirportView::OnLButtonDblClk(UINT /*nFlags*/, CPoint point) {
     }
 
     // Ist das Fenster hier zuständig? Ist der Klick in diesem Fenster?
-    if (point.x >= WinP1.x && point.x <= WinP2.x && point.y >= WinP1.y && point.y <= WinP2.y && (Editor == 0)) {
+    if (point.x >= WinP1.x - gHallMargin && point.x <= WinP2.x + gHallMargin && point.y >= WinP1.y && point.y <= WinP2.y && (Editor == 0)) {
         if (MenuIsOpen() != 0) {
             if (CalculatorIsOpen != 0) {
                 CalcClick();
@@ -1901,11 +2021,11 @@ void AirportView::OnRButtonDown(UINT nFlags, CPoint point) {
         Pos.x -= SizeX;
 
         // Horizonzale Begrenzung
-        if (Pos.x < Airport.LeftEnd) {
-            Pos.x = Airport.LeftEnd;
+        if (Pos.x < HallLeftEnd()) {
+            Pos.x = HallLeftEnd();
         }
-        if (Pos.x + SizeX > Airport.RightEnd) {
-            Pos.x = Airport.RightEnd - SizeX;
+        if (Pos.x + SizeX > HallRightEnd()) {
+            Pos.x = HallRightEnd() - SizeX;
         }
 
         // Über große Strecken lieber faden als scrollen
@@ -4243,25 +4363,29 @@ void AIRPORT::UnassociateBuilds() {
 // Hasht die Builds in diverse Buckets:
 //--------------------------------------------------------------------------------------------
 void AIRPORT::DoHashBuilds() {
-    SLONG c = 0;
-    SLONG d = 0;
+    // Abschnitte je 320 Pixel: alle Builds, die in den 3 (bisher) bzw. 4 (Breitbild, H14c) Abschnitten ab hier liegen.
+    // Beide Tabellen immer, damit es nicht darauf ankommt, wann die Breitbild-Option gelesen wurde.
+    for (SLONG wide = 0; wide < 2; wide++) {
+        BUFFER_V<BUILDS> &hash = wide != 0 ? HashBuildsWide : HashBuilds;
+        const SLONG span = wide != 0 ? 4 : 3;
 
-    HashBuilds.ReSize(0);
-    HashBuilds.ReSize((RightEnd - LeftEnd) / BUILDHASHSIZE);
+        hash.ReSize(0);
+        hash.ReSize((RightEnd - LeftEnd) / BUILDHASHSIZE);
 
-    for (c = 0; c < HashBuilds.AnzEntries(); c++) {
-        HashBuilds[c].ReSize(Builds.AnzEntries());
+        for (SLONG c = 0; c < hash.AnzEntries(); c++) {
+            hash[c].ReSize(Builds.AnzEntries());
 
-        for (d = 0; d < Builds.AnzEntries(); d++) {
-            if (Builds.IsInAlbum(d) != 0) {
-                if (Builds[d].ScreenPos.x + Bricks[Builds[d].BrickId].Bitmap[0].Size.x > LeftEnd + c * BUILDHASHSIZE &&
-                    Builds[d].ScreenPos.x <= LeftEnd + (c + 3) * BUILDHASHSIZE) {
-                    HashBuilds[c] *= Builds[d];
+            for (SLONG d = 0; d < Builds.AnzEntries(); d++) {
+                if (Builds.IsInAlbum(d) != 0) {
+                    if (Builds[d].ScreenPos.x + Bricks[Builds[d].BrickId].Bitmap[0].Size.x > LeftEnd + c * BUILDHASHSIZE &&
+                        Builds[d].ScreenPos.x <= LeftEnd + (c + span) * BUILDHASHSIZE) {
+                        hash[c] *= Builds[d];
+                    }
                 }
             }
-        }
 
-        HashBuilds[c].ReSize(HashBuilds[c].GetNumUsed());
+            hash[c].ReSize(hash[c].GetNumUsed());
+        }
     }
 }
 
