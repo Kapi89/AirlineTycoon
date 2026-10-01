@@ -1055,7 +1055,21 @@ void SB_CColorFX::BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap,
     }
 }
 
+static void RemapColorRaw(SB_CBitmapCore *pBitmap, const CRect &HighRect, UWORD OldFontColor, ULONG NewFontColor);
+
 void RemapColor(SB_CBitmapCore *pBitmap, const CRect &HighRect, UWORD OldFontColor, ULONG NewFontColor) {
+    // Schwarz -> (fast) Schwarz ueber die ganze Grafik (Stadtfotos): aendert nur, dass Schwarz nicht mehr durchsichtig ist.
+    // Fuer HD heisst das: dieselbe 4x-Grafik, nur deckend statt mit Colorkey.
+    const CRect clip = pBitmap->GetClipRect();
+    const bool hdOk = OldFontColor == 0 && NewFontColor == 1 && HighRect.left <= clip.left && HighRect.top <= clip.top && HighRect.right >= clip.right - 1 &&
+                      HighRect.bottom >= clip.bottom - 1 && pBitmap->HdIsValid();
+    RemapColorRaw(pBitmap, HighRect, OldFontColor, NewFontColor);
+    if (hdOk) {
+        pBitmap->HdKeyRemapped();
+    }
+}
+
+static void RemapColorRaw(SB_CBitmapCore *pBitmap, const CRect &HighRect, UWORD OldFontColor, ULONG NewFontColor) {
     SLONG cx = 0;
     SLONG cy = 0;
     UWORD *p = nullptr;

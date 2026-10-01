@@ -62,6 +62,13 @@ in **genau s-facher Groesse** des Blatts und im selben Layout (Zeichen untereina
 sonst wird die Maske aus dem Original berechnet. Jede Schriftdatei braucht ihre eigene PNG (z. B. `norm_bl`,
 `norm_rt`, `norm_wh` unterscheiden sich nur in der Farbe).
 
+### Stadtfotos (HD)
+
+Die Fotos im Globus/Filofax bzw. Laptop liegen als `hd/gli/<stadt>1.gli/<STADT>n.png` (bzw. `.glj`), 4-fach,
+RGB ohne Alphakanal. Das Spiel ersetzt im Foto Schwarz durch (fast) Schwarz, damit es deckend gezeichnet wird;
+die HD-Fassung wird dann ebenfalls deckend verwendet (reines Schwarz in der PNG am besten als (1,1,1)). Im Log
+steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
+
 ### Diagnose (HD-Ebene)
 
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
