@@ -217,7 +217,20 @@ void GameFrame::UpdateFrameSize() const {
     // update setting file
     Sim.Options.OptionScreenWindowedWidth = screenW;
     Sim.Options.OptionScreenWindowedHeight = screenH;
-    if (Sim.Options.OptionKeepAspectRatio == 0) {
+    if (Sim.Options.OptionWidescreen != 0) {
+        // Breitbild (H13): Leinwand cw x 480 nach dem Seitenverhaeltnis des Fensters, das Bild mittig darin
+        const SLONG cw = SB_CanvasWidthForWindow(screenW, screenH);
+        if (cw != SB_GetCanvasWidth()) {
+            AT_Log_I("Rendering", "Breitbild: Fenster %dx%d, Leinwand %dx480", screenW, screenH, cw);
+        }
+        SB_SetCanvasWidth(cw);
+        if (Sim.Options.OptionKeepAspectRatio == 0) {
+            PrimaryBm.PrimaryBm.SetCanvasTarget(XY{0, 0}, XY{screenW, screenH}, cw);
+        } else {
+            const SLONG aspectWidth = static_cast<SLONG>(static_cast<float>(screenH) * (static_cast<float>(cw) / 480.0F));
+            PrimaryBm.PrimaryBm.SetCanvasTarget(XY{(screenW - aspectWidth) / 2, 0}, XY{aspectWidth, screenH}, cw);
+        }
+    } else if (Sim.Options.OptionKeepAspectRatio == 0) {
         PrimaryBm.PrimaryBm.SetTarget(XY{0, 0}, XY{screenW, screenH});
     } else {
         const SLONG aspectWidth = getAspectWidth(screenH);
@@ -228,6 +241,13 @@ void GameFrame::UpdateFrameSize() const {
 }
 
 void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
+    if (Sim.Options.OptionWidescreen != 0) {
+        // Fenster (Renderer-Koordinaten) -> Bild; das Bild liegt mittig in der Leinwand
+        const XY g = PrimaryBm.PrimaryBm.WindowToGame(XY(p->x, p->y));
+        p->x = g.x;
+        p->y = g.y;
+        return;
+    }
     SLONG screenW = 0;
     SLONG screenH = 0;
     SDL_GetRendererOutputSize(SDL_GetRenderer(m_hWnd), &screenW, &screenH);
@@ -253,6 +273,12 @@ void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
 }
 
 void GameFrame::TranslatePointToScreenSpace(SLONG &x, SLONG &y) const {
+    if (Sim.Options.OptionWidescreen != 0) {
+        const XY w = PrimaryBm.PrimaryBm.GameToWindow(XY(x, y));
+        x = w.x;
+        y = w.y;
+        return;
+    }
     SLONG screenW = 0;
     SLONG screenH = 0;
     SDL_GetRendererOutputSize(SDL_GetRenderer(m_hWnd), &screenW, &screenH);

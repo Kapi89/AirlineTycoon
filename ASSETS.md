@@ -80,6 +80,14 @@ steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
   Frames mit mehr als 50 % 1x, Frames, die mit der letzten Liste ergaenzt wurden, und wie viele Eintraege je
   Frame aus dem letzten Frame uebernommen wurden (Stellen, die das Spiel nicht neu gezeichnet hat).
 
+### Breitbild (ab H13, in Arbeit)
+
+- `OptionWidescreen` in der `AT.json`: `0` = aus (Standard, Bild wie bisher), `1` = an. Die Leinwand richtet sich
+  nach dem Seitenverhaeltnis des Fensters: 16:10 (z. B. 2880x1800) -> 768x480, 16:9 -> 854x480, hoechstens 854.
+- Bis H13 sind alle Bildschirme 640 breit und stehen mittig mit schwarzen Raendern; die Halle wird ab H14 breit.
+- Im Log stehen `Breitbild: Fenster WxH, Leinwand Wx480` und bei jedem Wechsel `Bildbreite alt -> neu`;
+  die F11-Zeile nennt die Bildgroesse.
+
 ### Welche HD-Grafiken fehlen noch?
 
 In `AT.json` `"OptionHdMissingLog": true` setzen. Dann steht fuer jeden Chunk und jede Schrift, die im Spiel

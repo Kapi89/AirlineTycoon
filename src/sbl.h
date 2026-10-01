@@ -46,6 +46,13 @@ SLONG SB_GetRenderScale();
 void SB_SetLogicalSize(XY size);
 XY SB_GetLogicalSize();
 
+// Breitbild (H13): Breite der Leinwand (x 480), in die das Bild mittig gesetzt wird; 0 = aus (wie bisher).
+// Die Bildbreite selbst (640 oder breiter, z. B. die Halle ab H14) setzt SB_CPrimaryBitmap::SetFrameWidth.
+void SB_SetCanvasWidth(SLONG w);
+SLONG SB_GetCanvasWidth();
+// Leinwandbreite fuer ein Fenster (Seitenverhaeltnis, gerade, 640..854): 16:10 -> 768, 16:9 -> 854
+SLONG SB_CanvasWidthForWindow(SLONG w, SLONG h);
+
 class GfxLib {
   public:
     GfxLib(void *, SDL_Renderer *, const char *, SLONG, SLONG, SLONG *);
@@ -306,6 +313,11 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SLONG Flip(void);
     SLONG Present(void);
     void SetTarget(XY offset, XY size);
+    // Breitbild (H13): Leinwand im Fenster; das Bild (Size.x breit) liegt mittig darin
+    void SetCanvasTarget(XY offset, XY size, SLONG canvasW);
+    void SetFrameWidth(SLONG w); // Bildbreite wechseln (640 = wie bisher); verwirft die HD-Listen des Primaerpuffers
+    XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)
+    XY WindowToGame(XY p) const; // Fenster -> Bild (Mausposition)
     void SetVSync(BOOL toggle) { SDL_RenderSetVSync(lpDD, toggle); }
 
     void AssignCursor(SB_CCursor *c) { Cursor = c; }
@@ -375,6 +387,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
 
     XY TargetSize{};
     XY TargetOffset{0, 0};
+    XY CanvasOffset{0, 0}, CanvasSize{};
+    SLONG CanvasW{0}; // 0: kein Breitbild, Target = SetTarget
+    void UpdateFrameTarget();
 
     SDL_Window *Window{};
     SB_CCursor *Cursor{};
