@@ -2456,6 +2456,7 @@ class COptions {
     SLONG OptionFullscreen{};
     BOOL OptionKeepAspectRatio{};
     SLONG OptionRenderScale{}; // Render-Faktor s (1 = wie bisher), wirkt beim Neustart
+    SLONG OptionWidescreen{};  // Breitbild (H13): 1 = Leinwand nach Fenster-Seitenverhaeltnis (16:10 -> 768, 16:9 -> 854), 0 = aus
     SLONG OptionHdOverlayFilter{}; // Filter fuer das 1x-Overlay ueber HD-Hintergruenden: 0 = nearest, 1 = linear
     BOOL OptionHdMissingLog{};     // 1: jeder GLI-Chunk ohne HD-PNG einmal als "HD fehlt" im Log (mit Raum, Pfad, Groesse)
     BOOL OptionHdDebugMask{};      // 1: alle 5 s hd_frame/hd_ref/hd_mask.png in den Ordner hd_debug neben der AT.exe

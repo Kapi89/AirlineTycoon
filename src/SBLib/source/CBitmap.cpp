@@ -34,6 +34,19 @@ void SB_SetLogicalSize(XY size) { gLogicalSize = size; }
 
 XY SB_GetLogicalSize() { return gLogicalSize; }
 
+static SLONG gCanvasWidth = 0;
+void SB_SetCanvasWidth(SLONG w) { gCanvasWidth = w; }
+SLONG SB_GetCanvasWidth() { return gCanvasWidth; }
+
+SLONG SB_CanvasWidthForWindow(SLONG w, SLONG h) {
+    if (w <= 0 || h <= 0) {
+        return 640;
+    }
+    SLONG cw = SLONG(std::lround(480.0 * double(w) / double(h)));
+    cw = (cw + 1) & ~SLONG(1); // gerade: 853,3 -> 854
+    return std::max(SLONG(640), std::min(SLONG(854), cw));
+}
+
 Uint16 get_pixel16(SDL_Surface *surface, SLONG x, SLONG y);
 
 void put_pixel16(SDL_Surface *surface, SLONG x, SLONG y, Uint16 pixel);
@@ -1967,8 +1980,8 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
         char prefix[40];
         snprintf(prefix, sizeof(prefix), "hd_f11_%d_", HdDumpIndex);
         DumpHdDebug(prefix, HdDumpDir);
-        AT_Log("HD-Debug F11 #%d: Frame %llu, %.1f %% durchsichtig (Mittel %.1f %%), %.1f %% 1x, %zu Eintraege, Liste %s", HdDumpIndex,
-               static_cast<unsigned long long>(HdFrameNo), HdLastPct, HdAvgPct, 100.0 - HdLastPct, HdDrawList.size(), HdListSource);
+        AT_Log("HD-Debug F11 #%d: Frame %llu, %.1f %% durchsichtig (Mittel %.1f %%), %.1f %% 1x, %zu Eintraege, Liste %s, Bild %dx%d", HdDumpIndex,
+               static_cast<unsigned long long>(HdFrameNo), HdLastPct, HdAvgPct, 100.0 - HdLastPct, HdDrawList.size(), HdListSource, Size.x, Size.y);
         HdDumpPresent = HdDumpIndex; // naechstes Present legt HD-Ebene und Bildschirm ab
     }
 
@@ -2355,6 +2368,82 @@ SLONG SB_CPrimaryBitmap::Present() {
 void SB_CPrimaryBitmap::SetTarget(XY offset, XY size) {
     this->TargetOffset = offset;
     this->TargetSize = size;
+    CanvasW = 0;
+}
+
+void SB_CPrimaryBitmap::SetCanvasTarget(XY offset, XY size, SLONG canvasW) {
+    CanvasOffset = offset;
+    CanvasSize = size;
+    CanvasW = canvasW;
+    UpdateFrameTarget();
+}
+
+// Bild (Size.x breit) mittig in der Leinwand (CanvasW x Size.y logisch)
+void SB_CPrimaryBitmap::UpdateFrameTarget() {
+    if (CanvasW <= 0) {
+        return;
+    }
+    const SLONG w = SLONG(std::lround(double(CanvasSize.x) * double(Size.x) / double(CanvasW)));
+    TargetSize = XY(w, CanvasSize.y);
+    TargetOffset = XY(CanvasOffset.x + (CanvasSize.x - w) / 2, CanvasOffset.y);
+}
+
+XY SB_CPrimaryBitmap::GameToWindow(XY p) const {
+    if (Size.x <= 0 || Size.y <= 0) {
+        return p;
+    }
+    return XY(TargetOffset.x + SLONG(float(p.x) * float(TargetSize.x) / float(Size.x)), TargetOffset.y + SLONG(float(p.y) * float(TargetSize.y) / float(Size.y)));
+}
+
+XY SB_CPrimaryBitmap::WindowToGame(XY p) const {
+    if (TargetSize.x <= 0 || TargetSize.y <= 0) {
+        return p;
+    }
+    return XY(SLONG(float(p.x - TargetOffset.x) * float(Size.x) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
+}
+
+void SB_CPrimaryBitmap::SetFrameWidth(SLONG w) {
+    if (w <= 0 || w == Size.x || lpDDSurface == nullptr) {
+        return;
+    }
+    const SLONG h = Size.y;
+    if (lpDD != nullptr) {
+        SDL_UnlockTexture(lpTexture);
+        SDL_Texture *tex = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (tex == nullptr) {
+            AT_Log("Bildbreite %d nicht moeglich: %s", w, SDL_GetError());
+            SDL_LockTextureToSurface(lpTexture, nullptr, &lpDDSurface);
+            return;
+        }
+        SDL_DestroyTexture(lpTexture);
+        lpTexture = tex;
+        if (SDL_LockTextureToSurface(lpTexture, nullptr, &lpDDSurface) < 0) {
+            AT_Log("Unable to lock backbuffer to surface");
+            return;
+        }
+    } else {
+        SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 16, SDL_PIXELFORMAT_RGB565);
+        if (surf == nullptr) {
+            return;
+        }
+        SDL_FreeSurface(lpDDSurface);
+        lpDDSurface = surf;
+    }
+    SDL_FillRect(lpDDSurface, nullptr, 0);
+    AT_Log("Bildbreite %d -> %d (Leinwand %d)", Size.x, w, CanvasW);
+    Size.x = w;
+    InitClipRect();
+    UpdateFrameTarget();
+    // HD: Eintraege und Puffer gehoeren zur alten Breite
+    HdBlits.clear();
+    HdDrawList.clear();
+    HdTouched.clear();
+    HdThisFrame = false;
+    HdAvgPct = -1.0; // Mittelwert neu aufbauen (sonst gelten die ersten Frames als Einbruch)
+    if (Overlay != nullptr) {
+        SDL_DestroyTexture(Overlay);
+        Overlay = nullptr;
+    }
 }
 
 SLONG SB_CPrimaryBitmap::Create(SDL_Renderer **out, SDL_Window *Wnd, unsigned short /*flags*/, SLONG w, SLONG h, unsigned char /*unused*/,
