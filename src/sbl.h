@@ -141,7 +141,7 @@ struct SB_HdEntry {
     bool ColorKey{false};              // Blit mit Colorkey (sonst deckend)
     bool TexAlpha{false};              // Textur hat durchsichtige Stellen
     Uint8 Alpha{255};                  // Deckkraft auf der GPU (BlitTrans)
-    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans)
+    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans), 4 Text-Hervorhebung
     bool Glyph{false};                 // Zeichen aus einem HD-Glyphenblatt (H7)
     SDL_Texture *Tex2{nullptr};        // Kind 3: Weiss-Schicht (Alpha = Deckkraft)
     SDL_Texture *Tex3{nullptr};        // Kind 3: deckender Rest in 1x, Alpha = Maske fuer die HD-Inhalte
@@ -291,6 +291,11 @@ void SB_SetHdRoom(const char *room);
 void SB_RecordHdEffect(class SB_CBitmapCore *target, class SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind,
                        Uint8 alpha, SLONG param, SB_HdEffectReplay replay, const void *ctx);
 
+// Hervorhebung um Text (HighlightText, H12): rect = bearbeitetes Rechteck im Ziel (vor der 1x-Rechnung melden),
+// rgb = Leuchtfarbe 0xRRGGBB; replay rechnet die Hervorhebung auf der Referenz nach (pos = rect.x/y, Groesse = src).
+void SB_RecordHdHighlight(class SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 fontColor, Uint32 rgb, SLONG param, SB_HdEffectReplay replay,
+                          const void *ctx);
+
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
     SB_CPrimaryBitmap() = default;
@@ -328,6 +333,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect, bool colorKey);
     void KeepHdSource(SDL_Surface *src);
     void SeedHdList(SB_CBitmapCore *core);
+    void RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 fontColor, Uint32 rgb, SLONG param, SB_HdEffectReplay replay,
+                           const void *ctx);
+    SDL_Texture *GetGlowTexture(SDL_Surface *copy, Uint16 fontColor, Uint32 rgb);
     void RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                         SLONG param, SB_HdEffectReplay replay, const void *ctx);
     void HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque);
@@ -383,6 +391,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     std::unordered_set<SB_CBitmapCore *> HdTracked;                    // Offscreens mit Eintragsliste
     SDL_Surface *HdFullRef{};                                          // Referenz fuer den ganzen Frame
     std::vector<SDL_Texture *> HdGraveyard;                            // freigegebene Texturen, die HdDrawList evtl. noch zeichnet
+    std::unordered_map<Uint64, SDL_Texture *> HdGlowCache;              // Leuchtrand je Textinhalt/Farbe (H12)
     SDL_Texture *HdScratch{};                                          // Zwischenziel fuer Sprechblasen (Kind 3)
     SDL_BlendMode HdBlendMulAlpha{SDL_BLENDMODE_INVALID}, HdBlendPremul{SDL_BLENDMODE_INVALID};
     bool HdCompositeOk{true};

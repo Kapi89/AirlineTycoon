@@ -91,6 +91,13 @@ void SB_RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Re
     }
 }
 
+void SB_RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 fontColor, Uint32 rgb, SLONG param, SB_HdEffectReplay replay,
+                          const void *ctx) {
+    if (gHdPrimary != nullptr && target != nullptr && SB_GetRenderScale() > 1) {
+        gHdPrimary->RecordHdHighlight(target, rect, fontColor, rgb, param, replay, ctx);
+    }
+}
+
 // Pruefsumme der 1x-Pixel (erkennt, ob eine Bitmap mit HD-Textur nachtraeglich bemalt wurde)
 static Uint64 HdHashSurface(SDL_Surface *surface) {
     if (surface == nullptr || SDL_LockSurface(surface) < 0) {
@@ -1523,6 +1530,165 @@ void SB_CPrimaryBitmap::RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *targ
     HdLimit(*list, target == this ? 16384 : 4096);
 }
 
+// Leuchtrand der Text-Hervorhebung in s-facher Groesse (H12). copy = 1x-Rechteck vor der Hervorhebung.
+// Wie in 1x mischt jedes Schriftpixel seine Raute (Radius 3) einmal mit 1/8 Leuchtfarbe; k = Anzahl dieser
+// Mischungen je 1x-Pixel (mit denselben Randbedingungen wie HighlightText). In HD wird k zwischen den
+// Pixelmitten interpoliert, Deckkraft = 1 - (7/8)^k. Die Textur reicht 3 Pixel links und rechts ueber das Rechteck.
+SDL_Texture *SB_CPrimaryBitmap::GetGlowTexture(SDL_Surface *copy, Uint16 fontColor, Uint32 rgb) {
+    const SLONG s = SB_GetRenderScale();
+    const SLONG w = copy->w;
+    const SLONG h = copy->h;
+    const SLONG gw = w + 6;
+    Uint64 key = HdHashSurface(copy);
+    for (const Uint64 v : {Uint64(fontColor), Uint64(rgb), Uint64(s), Uint64(w), Uint64(h)}) {
+        key = (key ^ v) * 1099511628211ULL;
+    }
+    auto it = HdGlowCache.find(key);
+    if (it != HdGlowCache.end()) {
+        return it->second;
+    }
+    if (HdGlowCache.size() >= 256) {
+        for (auto &g : HdGlowCache) {
+            ForgetHdTexture(g.second);
+        }
+        HdGlowCache.clear();
+    }
+    std::vector<float> k(size_t(gw) * size_t(h), 0.0F);
+    SDL_LockSurface(copy);
+    for (SLONG cy = 0; cy < h; cy++) {
+        const auto *row = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(copy->pixels) + cy * copy->pitch);
+        for (SLONG col = 0; col < w; col++) {
+            if (row[col] != fontColor) {
+                continue;
+            }
+            const SLONG cx = w - col; // wie in HighlightText (zaehlt rueckwaerts)
+            for (SLONG x = -3; x <= 3; x++) {
+                for (SLONG y = -3 + abs(x); y <= 3 - abs(x); y++) {
+                    if (cx + x >= 0 && cx + x < w && cy + y >= 0 && cy + y < h) {
+                        k[size_t(cy + y) * gw + size_t(col + x + 3)] += 1.0F;
+                    }
+                }
+            }
+        }
+    }
+    SDL_UnlockSurface(copy);
+    SDL_Surface *argb = SDL_CreateRGBSurfaceWithFormat(0, gw * s, h * s, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (argb == nullptr) {
+        return nullptr;
+    }
+    auto K = [&](SLONG x, SLONG y) { return x < 0 || y < 0 || x >= gw || y >= h ? 0.0F : k[size_t(y) * gw + size_t(x)]; };
+    const float lg = std::log(7.0F / 8.0F);
+    for (SLONG Y = 0; Y < h * s; Y++) {
+        const float fy = (float(Y) + 0.5F) / float(s) - 0.5F;
+        const auto y0 = SLONG(std::floor(fy));
+        const float ty = fy - float(y0);
+        auto *d = reinterpret_cast<Uint32 *>(static_cast<Uint8 *>(argb->pixels) + Y * argb->pitch);
+        for (SLONG X = 0; X < gw * s; X++) {
+            const float fx = (float(X) + 0.5F) / float(s) - 0.5F;
+            const auto x0 = SLONG(std::floor(fx));
+            const float tx = fx - float(x0);
+            const float kv = (K(x0, y0) * (1 - tx) + K(x0 + 1, y0) * tx) * (1 - ty) + (K(x0, y0 + 1) * (1 - tx) + K(x0 + 1, y0 + 1) * tx) * ty;
+            const float a = 1.0F - std::exp(kv * lg);
+            d[X] = (Uint32(std::lround(a * 255.0F)) << 24) | (rgb & 0xFFFFFF);
+        }
+    }
+    SDL_Texture *tex = HdMakeTexture(lpDD, argb);
+    if (tex != nullptr) {
+        HdAlphaTex.insert(tex);
+        HdGlowCache[key] = tex;
+    }
+    return tex;
+}
+
+void SB_CPrimaryBitmap::RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 fontColor, Uint32 rgb, SLONG param,
+                                          SB_HdEffectReplay replay, const void *ctx) {
+    SDL_Surface *ts = target->lpDDSurface;
+    if (ts == nullptr || ts->format->BytesPerPixel != 2 || replay == nullptr || rect.w <= 0 || rect.h <= 0 || !CanUseHd()) {
+        return;
+    }
+    target->HdCheck = true;
+    const SDL_Rect area{rect.x - 3, rect.y, rect.w + 6, rect.h}; // HighlightText mischt bis zu 3 Pixel neben das Rechteck
+    const SDL_Rect bounds{0, 0, ts->w, ts->h};
+    SDL_Rect vis;
+    if (SDL_IntersectRect(&area, &bounds, &vis) == SDL_FALSE) {
+        return;
+    }
+    if (target == this) {
+        MarkHdTouched(vis);
+    }
+    std::vector<SB_HdEntry> *list = HdListOf(target, false);
+    if (list == nullptr) {
+        return; // Offscreen ohne HD-Inhalt: bleibt 1x
+    }
+    SDL_Surface *copy = SDL_CreateRGBSurfaceWithFormat(0, rect.w, rect.h, 16, ts->format->format);
+    if (copy == nullptr) {
+        return;
+    }
+    SDL_Rect sr = rect;
+    Uint32 tkey = 0;
+    const bool tHasKey = SDL_GetColorKey(ts, &tkey) == 0;
+    if (tHasKey) {
+        SDL_SetColorKey(ts, SDL_FALSE, tkey);
+    }
+    SDL_BlitSurface(ts, &sr, copy, nullptr);
+    if (tHasKey) {
+        SDL_SetColorKey(ts, SDL_TRUE, tkey);
+    }
+    SB_HdEntry e;
+    e.Keep = std::shared_ptr<SDL_Surface>(copy, SDL_FreeSurface);
+    e.Src = copy;
+    e.Tex = GetGlowTexture(copy, fontColor, rgb);
+    if (e.Tex == nullptr) {
+        return;
+    }
+    e.TexScale = SB_GetRenderScale();
+    e.SrcRect = area; // Position bei der Aufnahme (fuer die Unterliste); Texturausschnitt ist 0,0,area.w,area.h
+    e.Dst = area;
+    e.Clip = vis;
+    e.ColorKey = false;
+    e.TexAlpha = true;
+    e.Kind = 4;
+    e.Replay = replay;
+    e.Ctx = ctx;
+    e.Pos = XY(rect.x, rect.y);
+    e.Param = param;
+    // HD-Zeichen in der Schriftfarbe kommen ueber den Leuchtrand (in 1x bleiben Schriftpixel unveraendert)
+    auto sub = std::make_shared<std::vector<SB_HdEntry>>();
+    for (const SB_HdEntry &o : *list) {
+        if (!o.Glyph || o.Src == nullptr || o.Src->format->BytesPerPixel != 2) {
+            continue;
+        }
+        SDL_Rect ov = HdVisible(o);
+        if (SDL_IntersectRect(&ov, &rect, &ov) == SDL_FALSE) {
+            continue;
+        }
+        bool hasFont = false;
+        SDL_LockSurface(o.Src);
+        for (SLONG y = 0; y < o.SrcRect.h && !hasFont; y++) {
+            const SLONG sy = o.SrcRect.y + y;
+            if (sy < 0 || sy >= o.Src->h) {
+                continue;
+            }
+            const auto *row = reinterpret_cast<const Uint16 *>(static_cast<const Uint8 *>(o.Src->pixels) + sy * o.Src->pitch);
+            for (SLONG x = std::max(SLONG(0), SLONG(o.SrcRect.x)); x < std::min(SLONG(o.Src->w), SLONG(o.SrcRect.x + o.SrcRect.w)); x++) {
+                if (row[x] == fontColor) {
+                    hasFont = true;
+                    break;
+                }
+            }
+        }
+        SDL_UnlockSurface(o.Src);
+        if (hasFont) {
+            sub->push_back(o);
+        }
+    }
+    if (!sub->empty()) {
+        e.Sub = std::move(sub);
+    }
+    list->push_back(e);
+    HdLimit(*list, target == this ? 16384 : 4096);
+}
+
 void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind,
                                        Uint8 alpha, SLONG param, SB_HdEffectReplay replay, const void *ctx) {
     target->HdCheck = true;
@@ -2080,6 +2246,20 @@ void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Re
         }
         return;
     }
+    if (b.Kind == 4) {
+        // Text-Hervorhebung: Leuchtrand, dann die HD-Zeichen in der Schriftfarbe erneut darueber
+        const SDL_Rect gs{0, 0, b.SrcRect.w * ts, b.SrcRect.h * ts};
+        SDL_SetTextureBlendMode(b.Tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(b.Tex, 255);
+        SDL_RenderCopyF(lpDD, b.Tex, &gs, &dst);
+        if (b.Sub) {
+            const XY so(b.Dst.x - b.SrcRect.x + offset.x, b.Dst.y - b.SrcRect.y + offset.y);
+            for (const SB_HdEntry &e : *b.Sub) {
+                DrawHdEntry(e, so, &vis, nested);
+            }
+        }
+        return;
+    }
     if (b.Kind == 2 && b.Sub && !b.Sub->empty() && !nested && EnsureHdScratch()) {
         // Transparenz mit zusammengesetzter Quelle (Stimmungsblase mit Logo, aufklappender Block ...):
         // 1x-Quelle und ihre HD-Inhalte im Zwischenziel, dann mit der Deckkraft des Effekts darueber
@@ -2239,6 +2419,10 @@ ULONG SB_CPrimaryBitmap::Release() {
         SDL_DestroyTexture(t.second);
     }
     HdTexCacheOpaque.clear();
+    for (auto &t : HdGlowCache) {
+        SDL_DestroyTexture(t.second);
+    }
+    HdGlowCache.clear();
     HdAlphaTex.clear();
     for (auto &t : HdShadeCache) {
         SDL_DestroyTexture(t.second);
