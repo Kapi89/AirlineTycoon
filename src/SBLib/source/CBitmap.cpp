@@ -240,6 +240,58 @@ ULONG SB_CBitmapMain::CreateBitmap(SB_CBitmapCore **out, GfxLib *lib, __int64 na
     return 0;
 }
 
+ULONG SB_CBitmapMain::CreateBitmapFromHdPng(SB_CBitmapCore **out, const char *path, SLONG h1x) {
+    *out = nullptr;
+    const SLONG scale = std::max(SLONG(1), SB_GetRenderScale());
+    SDL_Surface *png = IMG_Load(path);
+    if (png == nullptr) {
+        return 1;
+    }
+    if (png->h != h1x * scale || png->w < scale) {
+        AT_Log("HD: %s ignoriert, %dx%d (Hoehe %d erwartet, %d-fach)", path, png->w, png->h, h1x * scale, scale);
+        SDL_FreeSurface(png);
+        return 1;
+    }
+    SDL_Surface *argb = SDL_ConvertSurfaceFormat(png, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(png);
+    if (argb == nullptr) {
+        return 1;
+    }
+    const SLONG w1x = argb->w / scale;
+    CreateBitmap(out, w1x, h1x, 0, CREATE_SYSMEM);
+    SB_CBitmapCore *core = *out;
+    // 1x: Mittelwert je s x s Block
+    SDL_LockSurface(argb);
+    for (SLONG y = 0; y < h1x; y++) {
+        auto *d = reinterpret_cast<Uint16 *>(static_cast<Uint8 *>(core->lpDDSurface->pixels) + y * core->lpDDSurface->pitch);
+        for (SLONG x = 0; x < w1x; x++) {
+            Uint32 r = 0, g = 0, b = 0;
+            for (SLONG yy = 0; yy < scale; yy++) {
+                const auto *src = reinterpret_cast<const Uint32 *>(static_cast<const Uint8 *>(argb->pixels) + (y * scale + yy) * argb->pitch) + x * scale;
+                for (SLONG xx = 0; xx < scale; xx++) {
+                    r += (src[xx] >> 16) & 0xFF;
+                    g += (src[xx] >> 8) & 0xFF;
+                    b += src[xx] & 0xFF;
+                }
+            }
+            const Uint32 n = Uint32(scale * scale);
+            d[x] = Uint16((((r / n) >> 3) << 11) | (((g / n) >> 2) << 5) | ((b / n) >> 3));
+        }
+    }
+    SDL_UnlockSurface(argb);
+    if (gHdPrimary != nullptr && scale > 1) {
+        // Die HD-Surface gehoert ab hier dem Cache des Primaerpuffers (wie die einer GfxLib, solange das Spiel laeuft)
+        core->HdTexture = gHdPrimary->GetHdTextureFor(argb, core->lpDDSurface, false);
+        core->HdSurface = core->HdTexture != nullptr ? argb : nullptr;
+        core->HdHash = core->HdTexture != nullptr ? HdHashSurface(core->lpDDSurface) : 0;
+    }
+    if (core->HdSurface == nullptr) {
+        SDL_FreeSurface(argb);
+    }
+    AT_Log("HD: %s geladen (%dx%d, 1x %dx%d)", path, w1x * scale, h1x * scale, w1x, h1x);
+    return 0;
+}
+
 ULONG SB_CBitmapMain::CreateBitmap(SB_CBitmapCore **out, SLONG w, SLONG h, ULONG /*unused*/, ULONG flags, ULONG /*unused*/) {
     auto id = UniqueId++;
     auto res = Bitmaps.emplace(std::make_pair(id, id));
@@ -1299,11 +1351,13 @@ SB_CPrimaryBitmap::HdFlat *SB_CPrimaryBitmap::GetWhiteTextures(SDL_Surface *src,
 }
 
 // Pixel, an die in diesem Frame im Primaerpuffer gezeichnet wurde (Blits, Text, Effekte, Clear)
-void SB_CPrimaryBitmap::MarkHdTouched(const SDL_Rect &r) {
-    if (lpDDSurface == nullptr) {
+void SB_CPrimaryBitmap::MarkHdTouched(const SDL_Rect &r0) {
+    const SDL_Surface *fs = ViewSurface != nullptr ? FullSurface : lpDDSurface;
+    if (fs == nullptr) {
         return;
     }
-    const SDL_Rect full{0, 0, lpDDSurface->w, lpDDSurface->h};
+    const SDL_Rect r{r0.x + ViewOffset, r0.y, r0.w, r0.h}; // im Fenster (BeginView): Fensterkoordinaten
+    const SDL_Rect full{0, 0, fs->w, fs->h};
     SDL_Rect a;
     if (SDL_IntersectRect(&r, &full, &a) == SDL_FALSE) {
         return;
@@ -1645,9 +1699,8 @@ void SB_CPrimaryBitmap::RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect
     if (SDL_IntersectRect(&area, &bounds, &vis) == SDL_FALSE) {
         return;
     }
-    if (target == this) {
-        MarkHdTouched(vis);
-    }
+    // Kein MarkHdTouched: die Hervorhebung mischt nur auf dem, was schon da ist. Was im letzten Frame dort lag und
+    // nicht neu gezeichnet wurde (z. B. Text in der Statuszeile), bleibt gueltig und kommt vor diesen Eintrag.
     std::vector<SB_HdEntry> *list = HdListOf(target, false);
     if (list == nullptr) {
         return; // Offscreen ohne HD-Inhalt: bleibt 1x
@@ -1686,7 +1739,20 @@ void SB_CPrimaryBitmap::RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect
     e.Param = param;
     // HD-Zeichen in der Schriftfarbe kommen ueber den Leuchtrand (in 1x bleiben Schriftpixel unveraendert)
     auto sub = std::make_shared<std::vector<SB_HdEntry>>();
-    for (const SB_HdEntry &o : *list) {
+    std::vector<SB_HdEntry> candidates(list->begin(), list->end());
+    if (target == this) {
+        // Zeichen aus dem letzten Frame, die noch stehen (werden beim Flip uebernommen); in Fensterkoordinaten
+        for (const SB_HdEntry &o : HdDrawList) {
+            if (o.Glyph && !IsHdTouched(HdVisible(o))) {
+                SB_HdEntry c = o;
+                c.Dst.x -= ViewOffset;
+                c.Clip.x -= ViewOffset;
+                c.Pos.x -= ViewOffset;
+                candidates.push_back(c);
+            }
+        }
+    }
+    for (const SB_HdEntry &o : candidates) {
         if (!o.Glyph || o.Src == nullptr || o.Src->format->BytesPerPixel != 2) {
             continue;
         }
@@ -2140,6 +2206,7 @@ void SB_CPrimaryBitmap::SaveRendererPng(const std::string &file) {
 }
 
 SLONG SB_CPrimaryBitmap::Flip() {
+    EndView();
     if (lpDD != nullptr) {
         BuildHdOverlay(); // liest den fertigen Frame, bevor die Textur entsperrt wird
         LogHdStats();
@@ -2427,10 +2494,54 @@ XY SB_CPrimaryBitmap::WindowToGame(XY p) const {
     return XY(SLONG(float(p.x - TargetOffset.x) * float(Size.x) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
 }
 
+void SB_CPrimaryBitmap::ShiftHdEntries(SLONG dx) {
+    for (SB_HdEntry &e : HdBlits) {
+        e.Dst.x += dx; // Kind 4: SrcRect bleibt (Lage der Unterliste)
+        e.Clip.x += dx;
+        e.Pos.x += dx;
+    }
+}
+
+void SB_CPrimaryBitmap::BeginView(SLONG ox) {
+    if (ox <= 0 || ViewSurface != nullptr || lpDDSurface == nullptr || Size.x - 2 * ox <= 0) {
+        return;
+    }
+    SDL_Surface *v = SDL_CreateRGBSurfaceWithFormatFrom(static_cast<Uint8 *>(lpDDSurface->pixels) + ox * lpDDSurface->format->BytesPerPixel,
+                                                        Size.x - 2 * ox, lpDDSurface->h, lpDDSurface->format->BitsPerPixel, lpDDSurface->pitch,
+                                                        lpDDSurface->format->format);
+    if (v == nullptr) {
+        AT_Log("Bildfenster nicht angelegt: %s", SDL_GetError());
+        return;
+    }
+    FullSurface = lpDDSurface;
+    ViewSurface = v;
+    lpDDSurface = v;
+    ViewOffset = ox;
+    FullSizeX = Size.x;
+    Size.x = v->w;
+    ShiftHdEntries(-ox); // waehrend des Fensters alles in Fensterkoordinaten
+    InitClipRect();
+}
+
+void SB_CPrimaryBitmap::EndView() {
+    if (ViewSurface == nullptr) {
+        return;
+    }
+    ShiftHdEntries(ViewOffset);
+    lpDDSurface = FullSurface;
+    Size.x = FullSizeX;
+    SDL_FreeSurface(ViewSurface);
+    ViewSurface = nullptr;
+    FullSurface = nullptr;
+    ViewOffset = 0;
+    InitClipRect();
+}
+
 void SB_CPrimaryBitmap::SetFrameWidth(SLONG w) {
     if (w <= 0 || w == Size.x || lpDDSurface == nullptr) {
         return;
     }
+    EndView();
     const SLONG h = Size.y;
     if (lpDD != nullptr) {
         SDL_UnlockTexture(lpTexture);

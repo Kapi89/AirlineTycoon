@@ -317,6 +317,11 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     // Breitbild (H13): Leinwand im Fenster; das Bild (Size.x breit) liegt mittig darin
     void SetCanvasTarget(XY offset, XY size, SLONG canvasW);
     void SetFrameWidth(SLONG w); // Bildbreite wechseln (640 = wie bisher); verwirft die HD-Listen des Primaerpuffers
+    // Breitbild (H14): bis EndView zeichnet alles in ein Fenster ab Bild-x ox (Breite Size.x - 2*ox), z. B. die
+    // Oberflaeche mittig ueber der breiten Halle. HD-Eintraege werden dabei in Fensterkoordinaten gefuehrt.
+    void BeginView(SLONG ox);
+    void EndView();
+    SLONG GetViewOffset() const { return ViewOffset; }
     XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)
     XY WindowToGame(XY p) const; // Fenster -> Bild (Mausposition)
     void SetVSync(BOOL toggle) { SDL_RenderSetVSync(lpDD, toggle); }
@@ -391,6 +396,11 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     XY TargetOffset{0, 0};
     XY CanvasOffset{0, 0}, CanvasSize{};
     SLONG CanvasW{0}; // 0: kein Breitbild, Target = SetTarget
+    SDL_Surface *ViewSurface{}; // Fenster in den Bildpuffer (BeginView), sonst nullptr
+    SDL_Surface *FullSurface{};
+    SLONG ViewOffset{0};
+    SLONG FullSizeX{0};
+    void ShiftHdEntries(SLONG dx);
     void UpdateFrameTarget();
 
     SDL_Window *Window{};
@@ -447,6 +457,9 @@ class SB_CBitmapMain {
     ULONG Release(void);
     ULONG CreateBitmap(SB_CBitmapCore **, GfxLib *, __int64, ULONG);
     ULONG CreateBitmap(SB_CBitmapCore **, SLONG, SLONG, ULONG, ULONG = 16, ULONG = 0);
+    // Bitmap aus einer HD-PNG ohne 1x-Original (z. B. Fuellung der Statusleiste, H14): 1x = PNG verkleinert um den
+    // Render-Faktor, HD-Ebene = PNG. Hoehe der PNG muss h1x * s sein. Liefert 1, wenn die Datei fehlt oder nicht passt.
+    ULONG CreateBitmapFromHdPng(SB_CBitmapCore **, const char *path, SLONG h1x);
     ULONG ReleaseBitmap(SB_CBitmapCore *);
     ULONG DelEntry(SB_CBitmapCore *);
 

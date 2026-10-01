@@ -237,6 +237,7 @@ class CStdRaum {
     virtual ~CStdRaum();
 
     void ProcessEvent(const SDL_Event &event, const CPoint &position);
+    virtual BOOL WantsWideFrame() const { return FALSE; } // Breitbild (H14): Bildschirm nutzt die ganze Leinwand
 
     // Generated message map functions
   protected:

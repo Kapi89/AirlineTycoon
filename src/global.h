@@ -24,6 +24,7 @@ extern const char ExcCreateWindow[]; // Fenster konnte nicht erzeugt werden
 extern SBBM gBlendBm;
 extern SBBM gBlendBm2;
 extern SLONG gBlendState;
+extern SLONG gHallMargin; // Breitbild (H14): Rand links/rechts der Halle neben dem mittleren 640er-Ausschnitt, sonst 0
 extern SLONG gFramesToDrawBeforeFirstBlend;
 
 //--------------------------------------------------------------------------------------------
