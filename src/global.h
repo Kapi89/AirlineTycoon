@@ -24,6 +24,21 @@ extern const char ExcCreateWindow[]; // Fenster konnte nicht erzeugt werden
 extern SBBM gBlendBm;
 extern SBBM gBlendBm2;
 extern SLONG gBlendState;
+extern SLONG gHallMargin; // Breitbild (H14): Rand links/rechts neben dem mittleren 640er-Ausschnitt (Halle, ab H17 auch Raeume), sonst 0
+extern SLONG gRightAnchor; // Breitbild (H17): Verschiebung rechtsbuendiger Oberflaeche (Berater, Handy): in der Halle = Rand, sonst 0
+extern SLONG RightAirportClip;
+// Rechter Rand, bis zu dem in der Halle gezeichnet wird (Bildkoordinaten). Im Breitbild die ganze Bildbreite,
+// auch bei offenem Handy (die Halle laeuft dahinter weiter); sonst wie bisher RightAirportClip.
+inline SLONG HallRightClip() { return gHallMargin != 0 ? 640 + 2 * gHallMargin : RightAirportClip; }
+// Breitbild (H15): rechter Rand fuer rechtsbuendige Oberflaeche (Berater, Handy) in Spielkoordinaten; sonst 640
+inline SLONG UiRightEdge() { return 640 + gRightAnchor; }
+// Breitbild (H15): Spielkoordinaten <-> Bildkoordinaten. In der Halle gilt fuer die Oberflaeche der mittlere 640er-
+// Ausschnitt (Bild-x - Rand); in der Statuszeile (y >= 440), die ueber die ganze Breite reicht, die Koordinaten der
+// 640 breiten Statuszeile: linker Teil wie im Bild, rechte Endkappe um 2 x Rand verschoben, die Rohrsegmente
+// dazwischen auf x >= 640 (keine Klickflaeche). Ohne Rand: unveraendert.
+SLONG StatusSplitX();
+XY FrameToGame(XY f);
+XY GameToFrame(XY g);
 extern SLONG gFramesToDrawBeforeFirstBlend;
 
 //--------------------------------------------------------------------------------------------
@@ -171,6 +186,7 @@ extern BOOL bLeaveGameLoop;      // Hauptschleife verlassen?
 extern BOOL bFirstClass;
 extern SLONG gAutoQuitOnDay; // Exit game on specified game
 extern SLONG gAutoBotDiff;
+extern SLONG gFixedSeed; // "/seed N": replay the same game for the same N (0 = seeded from the clock)
 
 //--------------------------------------------------------------------------------------------
 // Das Spiel höchstpersönlich:
@@ -489,3 +505,6 @@ extern const SLONG BTARGET_DAYS7;      // Spielziel ATFS-Level 7
 extern const SLONG BTARGET_VERBRAUCH;  // Spielziel ATFS-Level 8
 extern const SLONG BTARGET_NDAYS9;     // Spielziel ATFS-Level 9
 extern const SLONG BTARGET_NDAYS10;    // Spielziel ATFS-Level 10
+
+inline constexpr SLONG kCurrentYear{2026};
+inline constexpr SLONG kYearsSinceRelease{kCurrentYear - 2002};
