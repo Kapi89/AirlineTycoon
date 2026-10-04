@@ -182,6 +182,7 @@ class CStdRaum {
     BOOL PreLButtonDown(CPoint point);
     void RepaintText(BOOL RefreshAll);
     void PostPaint(void);
+    void BlitIntoStatusBand(SBBM &Bm, XY Pos); // Breitbild (H17b): Raum-eigene Grafik in der Statuszeile (y >= 440)
     void CheckHighlight(const CPoint &point);
     void SetTip(SBBM *pBitmapSource, void *pBitmapSource2, BOOL ForceRedraw, XY Pos, SLONG TipType, SLONG TipId, SLONG TipPar1 = 0, SLONG TipPar2 = 0);
     void AnnouceTipDataUpdate(SLONG TipType);
