@@ -925,7 +925,13 @@ void AirportView::OnPaint() {
             if (Editor != EDITOR_NONE) {
                 pBuilds = &Airport.Builds;
             } else {
-                // Breitbild: Abschnitte, die bis zum rechten Bildrand reichen (4 x 320 ab dem linken Bildrand)
+                // Breitbild: Abschnitte, die bis zum rechten Bildrand reichen (4 x 320 ab dem linken Bildrand). Nach dem Laden
+                // eines Spielstands gibt es nur die schmale Tabelle (sie steht im Spielstand): die breite hier anlegen (H15b).
+                if (gHallMargin != 0 && Airport.HashBuildsWide.AnzEntries() != Airport.HashBuilds.AnzEntries()) {
+                    Airport.DoHashBuilds(true);
+                    AT_Log_I("Rendering", "Breitbild: Gebaeude-Abschnitte 4 x 320 angelegt (%d, schmal %d, Halle %d..%d)",
+                             Airport.HashBuildsWide.AnzEntries(), Airport.HashBuilds.AnzEntries(), Airport.LeftEnd, Airport.RightEnd);
+                }
                 BUFFER_V<BUILDS> &hash = gHallMargin != 0 ? Airport.HashBuildsWide : Airport.HashBuilds;
                 SLONG Index = (ViewPos.x - Airport.LeftEnd) / BUILDHASHSIZE;
                 if (gHallMargin != 0) {
@@ -936,7 +942,19 @@ void AirportView::OnPaint() {
                     DebugBreak();
                 }
 
-                pBuilds = &hash[Index];
+                static BUILDS noBuilds;
+                if (gHallMargin != 0 && (Index < 0 || Index >= hash.AnzEntries())) {
+                    // Breitbild: keine Abschnitte (sollte nach dem Anlegen oben nicht vorkommen) - leer statt Absturz
+                    static bool logged = false;
+                    if (!logged) {
+                        logged = true;
+                        AT_Log_I("Rendering", "Breitbild: keine Gebaeude-Abschnitte (Halle %d..%d), Gebaeude werden nicht gezeichnet", Airport.LeftEnd,
+                                 Airport.RightEnd);
+                    }
+                    pBuilds = &noBuilds;
+                } else {
+                    pBuilds = &hash[Index];
+                }
             }
 
             Bench.AdminTime.Start();
@@ -4320,8 +4338,16 @@ void AIRPORT::DoHashBuilds() {
     // Abschnitte je 320 Pixel: alle Builds, die in den 3 (bisher) bzw. 4 (Breitbild, H14c) Abschnitten ab hier liegen.
     // Beide Tabellen immer, damit es nicht darauf ankommt, wann die Breitbild-Option gelesen wurde.
     for (SLONG wide = 0; wide < 2; wide++) {
-        BUFFER_V<BUILDS> &hash = wide != 0 ? HashBuildsWide : HashBuilds;
-        const SLONG span = wide != 0 ? 4 : 3;
+        DoHashBuilds(wide != 0);
+    }
+}
+
+// Eine der beiden Tabellen. Die schmale steht auch im Spielstand, die breite nicht: sie wird nach dem Laden beim
+// ersten Zeichnen der breiten Halle angelegt (H15b).
+void AIRPORT::DoHashBuilds(bool wide) {
+    {
+        BUFFER_V<BUILDS> &hash = wide ? HashBuildsWide : HashBuilds;
+        const SLONG span = wide ? 4 : 3;
 
         hash.ReSize(0);
         hash.ReSize((RightEnd - LeftEnd) / BUILDHASHSIZE);
@@ -4558,6 +4584,7 @@ TEAKFILE &operator<<(TEAKFILE &File, const AIRPORT &Airport) {
 TEAKFILE &operator>>(TEAKFILE &File, AIRPORT &Airport) {
     File >> Airport.Builds >> Airport.LeftEnd >> Airport.RightEnd;
     File >> Airport.GateMapper >> Airport.HashBuilds;
+    Airport.HashBuildsWide.ReSize(0); // gehoert nicht zum Spielstand: wird fuer die geladene Halle neu angelegt (H15b)
     File >> Airport.PlateOffset >> Airport.PlateDimension;
     File >> Airport.iPlate >> Airport.SeatsTaken;
     File >> Airport.Runes >> Airport.Doors >> Airport.Triggers;
