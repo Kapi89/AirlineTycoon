@@ -3983,7 +3983,10 @@ void COptions::ReadOptions() {
             OptionRenderScale = 1;
         }
         if (!reg.ReadRegistryKey_l(OptionWidescreen) || OptionWidescreen < 0 || OptionWidescreen > 1) {
-            OptionWidescreen = 0;
+            OptionWidescreen = 1; // ab H16 standardmaessig an; vorhandene Eintraege bleiben
+        }
+        if (!reg.ReadRegistryKey_l(OptionWidescreenRoomBorder) || OptionWidescreenRoomBorder < 0 || OptionWidescreenRoomBorder > 1) {
+            OptionWidescreenRoomBorder = 1;
         }
         if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
             OptionHdOverlayFilter = 0;
@@ -4275,6 +4278,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_b(OptionKeepAspectRatio);
     reg.WriteRegistryKey_l(OptionRenderScale);
     reg.WriteRegistryKey_l(OptionWidescreen);
+    reg.WriteRegistryKey_l(OptionWidescreenRoomBorder);
     reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_b(OptionHdDebugMask);
     reg.WriteRegistryKey_b(OptionHdMissingLog);

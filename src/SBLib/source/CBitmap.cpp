@@ -2395,14 +2395,75 @@ void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Re
     SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
 }
 
+// Breitbild (H16): Bild (1x) in eine Zielkopie und zweimal um 4 verkleinert, jeweils linear gefiltert. Das kleinste
+// Bild, auf die Leinwand vergroessert, ergibt einen weichen Hintergrund fuer die Raender neben schmaleren Bildern.
+bool SB_CPrimaryBitmap::PrepareRoomBorder() {
+    if (!RoomBorder || CanvasW <= 0 || TargetSize.x >= CanvasSize.x || lpDD == nullptr || SDL_RenderTargetSupported(lpDD) == SDL_FALSE) {
+        return false;
+    }
+    const SLONG w[3] = {Size.x, std::max(SLONG(1), Size.x / 4), std::max(SLONG(1), Size.x / 16)};
+    const SLONG h[3] = {Size.y, std::max(SLONG(1), Size.y / 4), std::max(SLONG(1), Size.y / 16)};
+    for (SLONG i = 0; i < 3; i++) {
+        int tw = 0, th = 0;
+        if (BorderTex[i] != nullptr) {
+            SDL_QueryTexture(BorderTex[i], nullptr, nullptr, &tw, &th);
+        }
+        if (BorderTex[i] == nullptr || tw != w[i] || th != h[i]) {
+            if (BorderTex[i] != nullptr) {
+                SDL_DestroyTexture(BorderTex[i]);
+            }
+            BorderTex[i] = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w[i], h[i]);
+            if (BorderTex[i] == nullptr) {
+                AT_Log("Breitbild: Raender ohne GPU-Zwischenziel (%s), bleiben schwarz", SDL_GetError());
+                RoomBorder = false;
+                return false;
+            }
+            SDL_SetTextureScaleMode(BorderTex[i], SDL_ScaleModeLinear);
+            SDL_SetTextureBlendMode(BorderTex[i], SDL_BLENDMODE_NONE);
+        }
+    }
+    SDL_SetTextureBlendMode(lpTexture, SDL_BLENDMODE_NONE);
+    SDL_Texture *src = lpTexture;
+    for (SLONG i = 0; i < 3; i++) {
+        SDL_SetRenderTarget(lpDD, BorderTex[i]);
+        SDL_RenderSetClipRect(lpDD, nullptr);
+        SDL_RenderCopy(lpDD, src, nullptr, nullptr);
+        src = BorderTex[i];
+    }
+    SDL_SetRenderTarget(lpDD, nullptr);
+    HdLastClip = SDL_Rect{-1, -1, -1, -1};
+    return true;
+}
+
+// Kleinstes Bild ueber die ganze Leinwand (Hoehe passend, Breite beschnitten), abgedunkelt; das Bild selbst kommt darueber
+void SB_CPrimaryBitmap::DrawRoomBorder() {
+    SDL_Texture *t = BorderTex[2];
+    if (t == nullptr) {
+        return;
+    }
+    const float scale = float(CanvasSize.x) / float(TargetSize.x); // so breit wie die Leinwand
+    const SDL_FRect dst{float(CanvasOffset.x), float(CanvasOffset.y) - float(CanvasSize.y) * (scale - 1.0F) / 2.0F, float(CanvasSize.x),
+                        float(CanvasSize.y) * scale};
+    const SDL_Rect clip{CanvasOffset.x, CanvasOffset.y, CanvasSize.x, CanvasSize.y};
+    SDL_RenderSetClipRect(lpDD, &clip);
+    SDL_SetTextureColorMod(t, 96, 96, 96);
+    SDL_RenderCopyF(lpDD, t, nullptr, &dst);
+    SDL_SetTextureColorMod(t, 255, 255, 255);
+    SDL_RenderSetClipRect(lpDD, nullptr);
+}
+
 SLONG SB_CPrimaryBitmap::Present() {
     if (lpDD != nullptr) {
+        const bool border = PrepareRoomBorder();
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
         SDL_RenderClear(lpDD);
 
         // Set the backbuffer as the render target
         if (SDL_SetRenderTarget(lpDD, nullptr) < 0) {
             return -1;
+        }
+        if (border) {
+            DrawRoomBorder();
         }
 
         const SDL_Rect target = SDL_Rect{TargetOffset.x, TargetOffset.y, TargetSize.x, TargetSize.y};
@@ -2653,6 +2714,12 @@ ULONG SB_CPrimaryBitmap::Release() {
         SDL_DestroyTexture(t.second);
     }
     HdTexCacheMask1x.clear();
+    for (auto *&t : BorderTex) {
+        if (t != nullptr) {
+            SDL_DestroyTexture(t);
+            t = nullptr;
+        }
+    }
     for (auto &t : HdGlowCache) {
         SDL_DestroyTexture(t.second);
     }
