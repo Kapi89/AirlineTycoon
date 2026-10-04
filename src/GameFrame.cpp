@@ -659,6 +659,10 @@ void GameFrame::Invalidate() {
             frameW = max(SLONG(640), SB_GetCanvasWidth());
         }
         if (frameW != PrimaryBm.Size.x) {
+            // H15b: vor dem Wechsel protokollieren, damit sich ein Fehler beim ersten Bild danach eingrenzen laesst
+            AT_Log_I("Rendering", "Breitbild: Wechsel auf Bildbreite %d (Halle %d..%d, Abschnitte schmal %d, breit %d, Ausschnitt x %d)", frameW,
+                     Airport.LeftEnd, Airport.RightEnd, Airport.HashBuilds.AnzEntries(), Airport.HashBuildsWide.AnzEntries(),
+                     Sim.localPlayer >= 0 && Sim.localPlayer < 4 ? Sim.Players.Players[Sim.localPlayer].ViewPos.x : 0);
             PrimaryBm.SetFrameWidth(frameW);
             if (loc != nullptr) {
                 loc->StatusCount = max(loc->StatusCount, SLONG(3)); // Statuszeile im neuen Bild neu zeichnen

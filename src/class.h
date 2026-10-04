@@ -2429,6 +2429,7 @@ class AIRPORT {
     void CalcCoordinates(void);
     void CalcSeats(void);
     void DoHashBuilds(void);
+    void DoHashBuilds(bool wide);
     void PumpDoors(void);
     void TryDoor(XY ArrayPos, BOOL Player, SLONG PlayerNum);
     void RemoveRunes(void);
