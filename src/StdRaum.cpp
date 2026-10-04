@@ -2684,7 +2684,7 @@ void CStdRaum::PostPaint() {
             RoomBm.pBitmap->SetClipRect(CRect(0, 0, 640, 480));
         } else {
             // Breitbild (H15): in der Halle am rechten Bildrand (gHallMargin weiter rechts als der mittlere Ausschnitt)
-            const SLONG hx = gHallMargin;
+            const SLONG hx = gRightAnchor;
             PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, UiRightEdge(), 440));
             PrimaryBm.BlitFrom(qRoom.RoomBm, SrcRect, Dest + XY(hx, 0));
 
@@ -2816,7 +2816,7 @@ void CStdRaum::PostPaint() {
         // Breitbild (H15): in der Halle reicht die Statuszeile ueber die ganze Bildbreite. Sie wird ausserhalb des mittleren
         // Ausschnitts gezeichnet (Bildkoordinaten): linker Block und Inventar am linken, die rechte Endkappe am rechten
         // Bildrand, dazwischen weitere Rohrsegmente. Mauskoordinaten in der Zeile: siehe FrameToGame.
-        const bool wideStatus = gHallMargin != 0 && WantsWideFrame() != 0;
+        const bool wideStatus = gHallMargin != 0 && WantsWideFrame() != 0 && bHandy == 0;
         const XY savedWinP1 = WinP1;
         const XY savedWinP2 = WinP2;
         if (wideStatus) {
@@ -2965,7 +2965,7 @@ void CStdRaum::PostPaint() {
         if (wideStatus) {
             WinP1 = savedWinP1;
             WinP2 = savedWinP2;
-            PrimaryBm.PrimaryBm.BeginView(gHallMargin, 640 + gHallMargin);
+            PrimaryBm.PrimaryBm.BeginView(gHallMargin, 640 + gRightAnchor);
             PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, UiRightEdge(), 480));
         }
 

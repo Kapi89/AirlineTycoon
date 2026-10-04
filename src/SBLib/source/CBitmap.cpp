@@ -2398,11 +2398,14 @@ void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Re
 // Breitbild (H16): Bild (1x) in eine Zielkopie und zweimal um 4 verkleinert, jeweils linear gefiltert. Das kleinste
 // Bild, auf die Leinwand vergroessert, ergibt einen weichen Hintergrund fuer die Raender neben schmaleren Bildern.
 bool SB_CPrimaryBitmap::PrepareRoomBorder() {
-    if (!RoomBorder || CanvasW <= 0 || TargetSize.x >= CanvasSize.x || lpDD == nullptr || SDL_RenderTargetSupported(lpDD) == SDL_FALSE) {
+    const bool side = SideBorder > 0 && Size.x > 2 * SideBorder;
+    if (!RoomBorder || CanvasW <= 0 || (!side && TargetSize.x >= CanvasSize.x) || lpDD == nullptr || SDL_RenderTargetSupported(lpDD) == SDL_FALSE) {
         return false;
     }
-    const SLONG w[3] = {Size.x, std::max(SLONG(1), Size.x / 4), std::max(SLONG(1), Size.x / 16)};
-    const SLONG h[3] = {Size.y, std::max(SLONG(1), Size.y / 4), std::max(SLONG(1), Size.y / 16)};
+    // Quelle: das ganze Bild, bzw. (H17) nur der Raum im mittleren Ausschnitt oberhalb der Statuszeile
+    const SDL_Rect srcRect = side ? SDL_Rect{SideBorder, 0, Size.x - 2 * SideBorder, std::min(SLONG(440), Size.y)} : SDL_Rect{0, 0, Size.x, Size.y};
+    const SLONG w[3] = {srcRect.w, std::max(SLONG(1), srcRect.w / 4), std::max(SLONG(1), srcRect.w / 16)};
+    const SLONG h[3] = {srcRect.h, std::max(SLONG(1), srcRect.h / 4), std::max(SLONG(1), srcRect.h / 16)};
     for (SLONG i = 0; i < 3; i++) {
         int tw = 0, th = 0;
         if (BorderTex[i] != nullptr) {
@@ -2427,7 +2430,7 @@ bool SB_CPrimaryBitmap::PrepareRoomBorder() {
     for (SLONG i = 0; i < 3; i++) {
         SDL_SetRenderTarget(lpDD, BorderTex[i]);
         SDL_RenderSetClipRect(lpDD, nullptr);
-        SDL_RenderCopy(lpDD, src, nullptr, nullptr);
+        SDL_RenderCopy(lpDD, src, i == 0 ? &srcRect : nullptr, nullptr);
         src = BorderTex[i];
     }
     SDL_SetRenderTarget(lpDD, nullptr);
@@ -2441,15 +2444,40 @@ void SB_CPrimaryBitmap::DrawRoomBorder() {
     if (t == nullptr) {
         return;
     }
-    const float scale = float(CanvasSize.x) / float(TargetSize.x); // so breit wie die Leinwand
-    const SDL_FRect dst{float(CanvasOffset.x), float(CanvasOffset.y) - float(CanvasSize.y) * (scale - 1.0F) / 2.0F, float(CanvasSize.x),
+    SDL_FRect dst;
+    SDL_Rect clip;
+    if (SideBorder > 0) {
+        // H17: nur neben dem Raum (Bild-y 0..440); Raum (640 x 440) auf die Leinwandbreite, senkrecht mittig
+        const SDL_FRect room = HdToTarget(SDL_Rect{0, 0, Size.x, std::min(SLONG(440), Size.y)});
+        const float h = room.w * 440.0F / 640.0F;
+        dst = SDL_FRect{room.x, room.y + (room.h - h) / 2.0F, room.w, h};
+        clip = SDL_Rect{SLONG(room.x), SLONG(room.y), SLONG(room.w + 0.5F), SLONG(room.h + 0.5F)};
+    } else {
+        const float scale = float(CanvasSize.x) / float(TargetSize.x); // so breit wie die Leinwand
+        dst = SDL_FRect{float(CanvasOffset.x), float(CanvasOffset.y) - float(CanvasSize.y) * (scale - 1.0F) / 2.0F, float(CanvasSize.x),
                         float(CanvasSize.y) * scale};
-    const SDL_Rect clip{CanvasOffset.x, CanvasOffset.y, CanvasSize.x, CanvasSize.y};
+        clip = SDL_Rect{CanvasOffset.x, CanvasOffset.y, CanvasSize.x, CanvasSize.y};
+    }
     SDL_RenderSetClipRect(lpDD, &clip);
     SDL_SetTextureColorMod(t, 96, 96, 96);
     SDL_RenderCopyF(lpDD, t, nullptr, &dst);
     SDL_SetTextureColorMod(t, 255, 255, 255);
     SDL_RenderSetClipRect(lpDD, nullptr);
+}
+
+// Bildtextur (1x-Bild oder Overlay) aufs Ziel; mit Seitenrand (H17) ohne die Streifen neben dem Raum, damit dort der
+// weiche Rand sichtbar bleibt: Raum oben in der Mitte, darunter die Statuszeile ueber die ganze Breite
+void SB_CPrimaryBitmap::CopyFrameTexture(SDL_Texture *tex) {
+    if (SideBorder > 0 && Size.x > 2 * SideBorder && Size.y > 440) {
+        const SDL_Rect parts[2] = {SDL_Rect{SideBorder, 0, Size.x - 2 * SideBorder, 440}, SDL_Rect{0, 440, Size.x, Size.y - 440}};
+        for (const SDL_Rect &p : parts) {
+            const SDL_FRect d = HdToTarget(p);
+            SDL_RenderCopyF(lpDD, tex, &p, &d);
+        }
+        return;
+    }
+    const SDL_FRect full{float(TargetOffset.x), float(TargetOffset.y), float(TargetSize.x), float(TargetSize.y)};
+    SDL_RenderCopyF(lpDD, tex, nullptr, &full);
 }
 
 SLONG SB_CPrimaryBitmap::Present() {
@@ -2469,9 +2497,9 @@ SLONG SB_CPrimaryBitmap::Present() {
         const SDL_Rect target = SDL_Rect{TargetOffset.x, TargetOffset.y, TargetSize.x, TargetSize.y};
         if (HdThisFrame) {
             // GPU-Ebenen: 1x-Frame als Basis, HD-Eintraege; darueber der 1x-Frame mit Differenzmaske
-            const SDL_FRect full{float(TargetOffset.x), float(TargetOffset.y), float(TargetSize.x), float(TargetSize.y)};
             // Basis: 1x-Frame, damit unter weichen HD-Raendern nie Schwarz durchscheint
-            SDL_RenderCopyF(lpDD, lpTexture, nullptr, &full);
+            SDL_RenderSetClipRect(lpDD, nullptr);
+            CopyFrameTexture(lpTexture);
             HdLastClip = SDL_Rect{-1, -1, -1, -1};
             for (const SB_HdEntry &b : HdDrawList) {
                 DrawHdEntry(b, XY(0, 0), nullptr, false);
@@ -2482,14 +2510,15 @@ SLONG SB_CPrimaryBitmap::Present() {
                 snprintf(dumpBase, sizeof(dumpBase), "/hd_f11_%d_", HdDumpPresent);
                 SaveRendererPng(HdDumpDir + dumpBase + "hd.png"); // 1x-Basis + HD-Ebene, ohne Overlay
             }
-            if (SDL_RenderCopyF(lpDD, Overlay, nullptr, &full) < 0) {
-                return -2;
-            }
+            CopyFrameTexture(Overlay);
             if (HdDumpPresent != 0) {
                 SaveRendererPng(HdDumpDir + dumpBase + "screen.png"); // so wie angezeigt (ohne Mauszeiger)
                 AT_Log("HD-Debug F11 #%d: %shd.png und %sscreen.png gespeichert", HdDumpPresent, dumpBase + 1, dumpBase + 1);
                 HdDumpPresent = 0;
             }
+        } else if (SideBorder > 0) {
+            SDL_RenderSetClipRect(lpDD, nullptr);
+            CopyFrameTexture(lpTexture);
         } else if (SDL_RenderCopy(lpDD, lpTexture, nullptr, &target) < 0) {
             // Copy our primary texture to the backbuffer
             return -2;
