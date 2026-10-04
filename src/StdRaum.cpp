@@ -2628,6 +2628,27 @@ void CStdRaum::PumpToolTips() {
 }
 
 //--------------------------------------------------------------------------------------------
+// Breitbild (H17b): Einige Raeume zeichnen nach PostPaint eigene Grafik in den Bereich der Statuszeile (z. B. der
+// Exit-Knopf der Statistik ueber dem linken Block). Pos ist in Spielkoordinaten; im Breitbild liegt die Zeile aber am
+// Bildrand, also ausserhalb des mittleren Ausschnitts. Gezeichnet wird deshalb mit derselben Abbildung wie Maus und
+// Tooltips (GameToFrame), damit Bild und Klickflaeche uebereinstimmen.
+//--------------------------------------------------------------------------------------------
+void CStdRaum::BlitIntoStatusBand(SBBM &Bm, XY Pos) {
+    const bool wideStatus = gHallMargin != 0 && WantsWideFrame() != 0 && bHandy == 0;
+    if (!wideStatus) {
+        PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, 640, 480));
+        PrimaryBm.BlitFrom(Bm, Pos);
+        return;
+    }
+
+    PrimaryBm.PrimaryBm.EndView();
+    PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 440, 640 + 2 * gHallMargin, 480));
+    PrimaryBm.BlitFrom(Bm, GameToFrame(Pos));
+    PrimaryBm.PrimaryBm.BeginView(gHallMargin, 640 + gRightAnchor);
+    PrimaryBm.PrimaryBm.SetClipRect(CRect(0, 0, UiRightEdge(), 480));
+}
+
+//--------------------------------------------------------------------------------------------
 // Malt ggf. über den gesammten Raum noch den Text drüber:
 //--------------------------------------------------------------------------------------------
 void CStdRaum::PostPaint() {

@@ -90,6 +90,8 @@ steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
 - Ab H17 gilt das Breitbild auch in Raeumen mit Statuszeile: der Raum steht mittig (640x440), die Statuszeile reicht
   wie in der Halle ueber die ganze Breite. Bildschirme ohne Statuszeile (Menues, Optionen, Vollbild-Raeume) bleiben
   640 breit und mittig.
+  Zeichnet ein Raum selbst in die Statuszeile (z. B. der Exit-Knopf der Statistik ueber dem linken Block), geht das ueber
+  `CStdRaum::BlitIntoStatusBand` an die Position der breiten Zeile, mit derselben Umrechnung wie Maus und Tooltips (H17b).
 - `OptionWidescreenRoomBorder`: Raender neben dem Raum bzw. neben 640 breiten Bildschirmen: `1` = weichgezeichnet und
   abgedunkelt aus dem Bild selbst, auf der GPU (Standard), `0` = schwarz. Ohne GPU-Zwischenziel bleiben sie schwarz.
 - Ab H15 reicht die Statuszeile in der Halle ueber die ganze Breite: linker Block und Inventar am linken, die rechte
