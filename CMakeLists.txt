@@ -4,6 +4,11 @@ project (AirlineTycoon)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# HD-Rendering (Phase 2) braucht mehr als 4 GB Adressraum: nur 64-Bit-Builds
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Airline Tycoon muss als 64-Bit-Programm gebaut werden (z. B. cmake -A x64).")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 elseif (CMAKE_BUILD_TYPE STREQUAL "Tidy")
@@ -45,7 +50,7 @@ if (WIN32)
     set(DEPENDENCIES_PATH ${DEPENDENCIES_PATH} "${CMAKE_BINARY_DIR}/dependencies")
     file(MAKE_DIRECTORY ${DEPENDENCIES_PATH})
     file(GLOB_RECURSE dll_files ${SDL2_PATH}/*.dll ${SDL2_MIXER_PATH}/*.dll ${SDL2_IMAGE_PATH}/*.dll ${SDL2_TTF_PATH}/*.dll ${PROJECT_SOURCE_DIR}/libs/*.dll ${PROJECT_SOURCE_DIR}/libs/*.exe)
-    list(FILTER dll_files INCLUDE REGEX "x64|sentry\\.dll|\\.exe$")
+    list(FILTER dll_files INCLUDE REGEX "x64|\\.exe$")
     foreach(file ${dll_files})
         file(COPY ${file} DESTINATION ${DEPENDENCIES_PATH})
     endforeach()
