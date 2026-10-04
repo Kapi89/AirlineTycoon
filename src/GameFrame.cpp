@@ -205,6 +205,50 @@ void GameFrame::UpdateWindow() const {
     UpdateFrameSize();
 }
 
+//--------------------------------------------------------------------------------------------
+// Breitbild (H15): Abbildung Spiel- <-> Bildkoordinaten (siehe global.h)
+//--------------------------------------------------------------------------------------------
+SLONG StatusSplitX() {
+    const SLONG capW = StatusLineBms.AnzEntries() > 6 && StatusLineBms[6].Size.x > 0 ? StatusLineBms[6].Size.x : 32;
+    return 640 - capW;
+}
+
+XY FrameToGame(XY f) {
+    const SLONG m = gHallMargin;
+    if (m == 0) {
+        return f;
+    }
+    if (f.y >= 440) {
+        const SLONG split = StatusSplitX();
+        if (f.x < split) {
+            return f;
+        }
+        if (f.x >= split + 2 * m) {
+            return XY(f.x - 2 * m, f.y);
+        }
+        return XY(640 + f.x - split, f.y);
+    }
+    return XY(f.x - m, f.y);
+}
+
+XY GameToFrame(XY g) {
+    const SLONG m = gHallMargin;
+    if (m == 0) {
+        return g;
+    }
+    if (g.y >= 440) {
+        const SLONG split = StatusSplitX();
+        if (g.x < split) {
+            return g;
+        }
+        if (g.x < 640) {
+            return XY(g.x + 2 * m, g.y);
+        }
+        return XY(g.x - 640 + split, g.y);
+    }
+    return XY(g.x + m, g.y);
+}
+
 static SLONG getAspectWidth(SLONG height) {
     const XY logical = SB_GetLogicalSize();
     return static_cast<SLONG>(static_cast<float>(height) * (static_cast<float>(logical.x) / static_cast<float>(logical.y)));
@@ -243,9 +287,9 @@ void GameFrame::UpdateFrameSize() const {
 void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
     if (Sim.Options.OptionWidescreen != 0) {
         // Fenster (Renderer-Koordinaten) -> Bild; das Bild liegt mittig in der Leinwand
-        // Spiel-Koordinaten bleiben die des mittleren 640er-Ausschnitts (Halle: auch links davon negativ)
-        const XY g = PrimaryBm.PrimaryBm.WindowToGame(XY(p->x, p->y));
-        p->x = g.x - gHallMargin;
+        // Spiel-Koordinaten bleiben die des mittleren 640er-Ausschnitts (Halle: auch links davon negativ, Statuszeile s. o.)
+        const XY g = FrameToGame(PrimaryBm.PrimaryBm.WindowToGame(XY(p->x, p->y)));
+        p->x = g.x;
         p->y = g.y;
         return;
     }
@@ -275,7 +319,7 @@ void GameFrame::TranslatePointToGameSpace(CPoint *p) const {
 
 void GameFrame::TranslatePointToScreenSpace(SLONG &x, SLONG &y) const {
     if (Sim.Options.OptionWidescreen != 0) {
-        const XY w = PrimaryBm.PrimaryBm.GameToWindow(XY(x + gHallMargin, y));
+        const XY w = PrimaryBm.PrimaryBm.GameToWindow(GameToFrame(XY(x, y)));
         x = w.x;
         y = w.y;
         return;
@@ -619,11 +663,27 @@ void GameFrame::Invalidate() {
             if (loc != nullptr) {
                 loc->StatusCount = max(loc->StatusCount, SLONG(3)); // Statuszeile im neuen Bild neu zeichnen
             }
-            if (gBlendState != -1) {
-                // Ueberblendung zwischen verschieden breiten Bildern gibt es noch nicht (H15): direkt umschalten
-                gBlendState = -1;
-                gBlendBm.Destroy();
-                gBlendBm2.Destroy();
+            if (gBlendState != -1 && gBlendBm.pBitmap != nullptr && gBlendBm.Size.x != frameW) {
+                // Ueberblendung zwischen verschieden breiten Bildern (H15): altes Bild mittig auf die neue Breite bringen
+                // (schmaler -> schwarze Raender, breiter -> mittlerer Ausschnitt)
+                const SLONG oldW = gBlendBm.Size.x;
+                const SLONG h = gBlendBm.Size.y;
+                std::vector<UWORD> rows(size_t(frameW) * size_t(h), 0);
+                {
+                    SB_CBitmapKey key(*gBlendBm.pBitmap);
+                    const SLONG dx = (frameW - oldW) / 2;
+                    for (SLONG y = 0; y < h && key.Bitmap != nullptr; y++) {
+                        const auto *src = reinterpret_cast<const UWORD *>(static_cast<const char *>(key.Bitmap) + y * key.lPitch);
+                        for (SLONG x = max(SLONG(0), dx); x < min(frameW, oldW + dx); x++) {
+                            rows[size_t(y) * frameW + x] = src[x - dx];
+                        }
+                    }
+                }
+                gBlendBm.ReSize(XY(frameW, h));
+                SB_CBitmapKey key(*gBlendBm.pBitmap);
+                for (SLONG y = 0; y < h && key.Bitmap != nullptr; y++) {
+                    memcpy(static_cast<char *>(key.Bitmap) + y * key.lPitch, &rows[size_t(y) * frameW], size_t(frameW) * 2);
+                }
             }
         }
         gHallMargin = (PrimaryBm.Size.x - 640) / 2;
@@ -693,8 +753,9 @@ void GameFrame::PrepareFade() {
         SB_CBitmapKey TgtKey(*gBlendBm.pBitmap);
 
         if (SrcKey.Bitmap != nullptr) {
+            const SLONG w = min(PrimaryBm.PrimaryBm.GetXSize(), gBlendBm.Size.x); // Breitbild: ganze Bildbreite
             for (SLONG y = 0; y < 480; y++) {
-                memcpy(static_cast<char *>(TgtKey.Bitmap) + y * TgtKey.lPitch, static_cast<char *>(SrcKey.Bitmap) + y * SrcKey.lPitch, 640 * 2);
+                memcpy(static_cast<char *>(TgtKey.Bitmap) + y * TgtKey.lPitch, static_cast<char *>(SrcKey.Bitmap) + y * SrcKey.lPitch, w * 2);
             }
         }
     }
@@ -811,7 +872,10 @@ void GameFrame::OnPaint() {
             }
 
             if ((ToolTipState != 0) && (ToolTipId != 0)) {
-                SLONG px = gMousePosition.x + 16 - gToolTipBm.Size.x / 2;
+                // Gezeichnet wird im ganzen Bild (Breitbild: Mausposition in Bildkoordinaten, H15)
+                const XY mouse = GameToFrame(gMousePosition);
+                const SLONG frameW = PrimaryBm.PrimaryBm.GetXSize();
+                SLONG px = mouse.x + 16 - gToolTipBm.Size.x / 2;
                 SLONG py = 0;
 
                 UpdateStatusBar();
@@ -819,18 +883,18 @@ void GameFrame::OnPaint() {
                 if (px < 2) {
                     px = 2;
                 }
-                if (px > 639 - gToolTipBm.Size.x) {
-                    px = 639 - gToolTipBm.Size.x;
+                if (px > frameW - 1 - gToolTipBm.Size.x) {
+                    px = frameW - 1 - gToolTipBm.Size.x;
                 }
 
-                if (gMousePosition.y < 439) {
-                    py = gMousePosition.y + 32;
+                if (mouse.y < 439) {
+                    py = mouse.y + 32;
                 } else {
-                    py = gMousePosition.y;
-                    if (gMousePosition.x + 32 + gToolTipBm.Size.x < 630) {
-                        px = gMousePosition.x + 32;
+                    py = mouse.y;
+                    if (mouse.x + 32 + gToolTipBm.Size.x < frameW - 10) {
+                        px = mouse.x + 32;
                     } else {
-                        px = gMousePosition.x - 5 - gToolTipBm.Size.x;
+                        px = mouse.x - 5 - gToolTipBm.Size.x;
                     }
 
                     if (py > 480 - 28) {
@@ -908,6 +972,13 @@ void GameFrame::OnPaint() {
         TXY<SLONG> rcWindow;
 
         PrimaryBm.PrimaryBm.BeginView(gHallMargin); // Breitbild (H14): Pausenbild mittig, die Halle bleibt daneben stehen
+        if (gHallMargin != 0 && PauseFade < 8) {
+            // Breitbild: ohne Einblenden (die Mischung arbeitet auf dem ganzen Bild, das Pausenbild ist 640 breit)
+            if (Sim.localPlayer != -1 && (Sim.Players.Players[Sim.localPlayer].LocationWin != nullptr)) {
+                (Sim.Players.Players[Sim.localPlayer].LocationWin)->StatusCount = 32;
+            }
+            PauseFade = 8;
+        }
 
         if (pGLibPause == nullptr) {
             pGfxMain->LoadLib(const_cast<char *>((LPCTSTR)FullFilename("pause.gli", RoomPath)), &pGLibPause, L_LOCMEM);
