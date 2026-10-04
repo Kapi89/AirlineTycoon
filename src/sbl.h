@@ -321,6 +321,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     // Oberflaeche mittig ueber der breiten Halle. HD-Eintraege werden dabei in Fensterkoordinaten gefuehrt.
     // Breitbild (H16): Raender neben einem schmaleren Bild (Raeume) aus dem Bild selbst, weichgezeichnet und abgedunkelt
     void SetRoomBorder(bool on) { RoomBorder = on; }
+    // Breitbild (H17): Bild so breit wie die Leinwand, der Raum aber nur im mittleren 640er-Ausschnitt oberhalb von y 440;
+    // links und rechts davon (Breite margin) zeigt die GPU den weichen Rand statt der Bildpixel. 0 = aus.
+    void SetSideBorder(SLONG margin) { SideBorder = margin; }
     void BeginView(SLONG ox, SLONG w = -1); // w: Breite des Fensters, -1 = mittig (Size.x - 2 * ox)
     void EndView();
     SLONG GetViewOffset() const { return ViewOffset; }
@@ -405,6 +408,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ShiftHdEntries(SLONG dx);
     void UpdateFrameTarget();
     bool RoomBorder{false};
+    SLONG SideBorder{0};
+    void CopyFrameTexture(SDL_Texture *tex); // ganzes Bild bzw. ohne die Seitenraender (SideBorder)
     SDL_Texture *BorderTex[3]{}; // Kopie des Bildes, 1/4, 1/16 (Weichzeichnen durch Verkleinern mit linearer Filterung)
     bool PrepareRoomBorder();
     void DrawRoomBorder();

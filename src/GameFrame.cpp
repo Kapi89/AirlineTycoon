@@ -692,6 +692,18 @@ void GameFrame::Invalidate() {
             }
         }
         gHallMargin = (PrimaryBm.Size.x - 640) / 2;
+        // H17: Raeume mit Statuszeile im breiten Bild: Raum im mittleren Ausschnitt, daneben (y < 440) der Rand der GPU
+        const bool roomWide = gHallMargin != 0 && loc != nullptr && loc->IsHallView() == 0;
+        gRightAnchor = roomWide ? 0 : gHallMargin;
+        PrimaryBm.PrimaryBm.SetSideBorder(roomWide ? gHallMargin : 0);
+        if (roomWide) {
+            // Streifen neben dem Raum leeren (z. B. Reste der Halle; ohne weichen Rand bleiben sie schwarz)
+            SDL_Surface *frame = PrimaryBm.PrimaryBm.GetSurface();
+            for (const SDL_Rect &r : {SDL_Rect{0, 0, gHallMargin, 440}, SDL_Rect{640 + gHallMargin, 0, gHallMargin, 440}}) {
+                SDL_FillRect(frame, &r, 0);
+                static_cast<SB_CBitmapCore &>(PrimaryBm.PrimaryBm).HdWritten(&r, true);
+            }
+        }
     }
 
     if (TopWin != nullptr) {
@@ -702,7 +714,15 @@ void GameFrame::Invalidate() {
 
             if (w != nullptr) {
                 // if (XY(point).IfIsWithin (w->WinP1.x, w->WinP1.y, w->WinP2.x, w->WinP2.y))
+                // Breitbild (H17): Raeume zeichnen im mittleren 640er-Ausschnitt (die Halle verwaltet das selbst)
+                const bool roomView = gHallMargin != 0 && w->IsHallView() == 0;
+                if (roomView) {
+                    PrimaryBm.PrimaryBm.BeginView(gHallMargin, 640);
+                }
                 w->OnPaint();
+                if (roomView) {
+                    PrimaryBm.PrimaryBm.EndView();
+                }
             }
         }
     }

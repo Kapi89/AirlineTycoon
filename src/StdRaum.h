@@ -237,7 +237,9 @@ class CStdRaum {
     virtual ~CStdRaum();
 
     void ProcessEvent(const SDL_Event &event, const CPoint &position);
-    virtual BOOL WantsWideFrame() const { return FALSE; } // Breitbild (H14): Bildschirm nutzt die ganze Leinwand
+    // Breitbild: Bildschirm nutzt die ganze Leinwand. Raeume mit Statuszeile (H17): Raum mittig, Statuszeile ueber die ganze Breite
+    virtual BOOL WantsWideFrame() const { return static_cast<BOOL>(PicBitmap.Size.y <= 440 && bHandy == 0); }
+    virtual BOOL IsHallView() const { return FALSE; } // Halle: zeichnet selbst ueber die ganze Breite (H14)
 
     // Generated message map functions
   protected:

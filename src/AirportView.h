@@ -46,6 +46,7 @@ class AirportView : public CStdRaum {
     //{{AFX_MSG(AirportView)
     virtual void OnPaint();
     BOOL WantsWideFrame() const override;
+    BOOL IsHallView() const override { return TRUE; }
     virtual void OnLButtonDown(UINT nFlags, CPoint point);
     virtual void OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags);
     virtual void OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags);

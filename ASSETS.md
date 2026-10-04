@@ -87,7 +87,10 @@ steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
   nach dem Seitenverhaeltnis des Fensters: 16:10 (z. B. 2880x1800) -> 768x480, 16:9 -> 854x480, hoechstens 854.
 - Ab H14 nutzt die Flughafenhalle die ganze Leinwand; alle anderen Bildschirme bleiben 640 breit und stehen mittig
   mit schwarzen Raendern. Menues und Dialoge liegen in der Halle im mittleren 640er-Ausschnitt.
-- `OptionWidescreenRoomBorder`: Raender neben 640 breiten Bildschirmen (Raeume, Menues): `1` = weichgezeichnet und
+- Ab H17 gilt das Breitbild auch in Raeumen mit Statuszeile: der Raum steht mittig (640x440), die Statuszeile reicht
+  wie in der Halle ueber die ganze Breite. Bildschirme ohne Statuszeile (Menues, Optionen, Vollbild-Raeume) bleiben
+  640 breit und mittig.
+- `OptionWidescreenRoomBorder`: Raender neben dem Raum bzw. neben 640 breiten Bildschirmen: `1` = weichgezeichnet und
   abgedunkelt aus dem Bild selbst, auf der GPU (Standard), `0` = schwarz. Ohne GPU-Zwischenziel bleiben sie schwarz.
 - Ab H15 reicht die Statuszeile in der Halle ueber die ganze Breite: linker Block und Inventar am linken, die rechte
   Endkappe am rechten Bildrand, dazwischen weitere Rohrsegmente aus der Original-Grafik. Berater und Handy sitzen am
