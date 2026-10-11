@@ -82,6 +82,27 @@ Feste Seeds, deterministische torch-Algorithmen und eine feste Thread-Zahl (`--t
 Referenzpaket). Auf der CPU ergeben gleiche Eingaben und Modelle bitgleiche PNGs. Mit `--gpu` (CUDA) sind die
 Ergebnisse gleichwertig, aber nicht bitgleich zur CPU.
 
+### macOS (Stand H18, ungetestet im Spiel)
+
+- **Generator:** laeuft unter macOS wie unter Windows/Linux (nur `os.path`, keine festen Trenner). `--gpu` waehlt CUDA,
+  sonst MPS (Apple-Chip, mit `PYTORCH_ENABLE_MPS_FALLBACK=1`), sonst CPU. Gesucht wird der Datenordner (mit `gli/`) bis
+  8 Ebenen tief, also auch im `.app`-Paket; `hd/` kommt dorthin, weil das Spiel `hd/` neben `AT` sucht
+  (`SDL_GetBasePath`).
+- **Renderer:** Die Engine waehlt keinen Treiber (`SDL_CreateRenderer(-1, ...)`); SDL nimmt auf dem Mac **Metal**
+  (SDL2 und SDL3), unter Windows Direct3D. Der Metal-Treiber von SDL kann alles, was die HD-Ebene braucht:
+  Zwischenziele (`SDL_TEXTUREACCESS_TARGET`, ARGB8888 nativ), die eigenen Blend-Modi der Sprechblasen
+  (ZERO/SRC_ALPHA/ONE/ONE_MINUS_SRC_ALPHA mit ADD), Farbmodulation (Raumraender), lineare Filterung,
+  `SDL_RenderReadPixels` (F11) und Texturen bis 16384 px. RGB565 (1x-Bild) ist auf Metal nicht nativ und wird von
+  SDL umgewandelt, wie schon vor HD.
+- **sdl2-compat:** Der Mac-Build nutzt per Homebrew `sdl2-compat`, also SDL3 unter der SDL2-Schnittstelle. Alle
+  HD-Harness-Tests (Sprechblasen, BlitTrans, Leuchtrand, Breitbild, Raumraender, Statuszeile) laufen damit unter
+  OpenGL und Software gleich wie mit SDL2, bis auf Rundung (hoechstens 2 von 255 Farbstufen). Dabei gefunden und
+  behoben: `SDL_ConvertSurface` auf einer RLE-kodierten Spielgrafik laesst in `sdl2-compat` einen veralteten
+  Pixelzeiger zurueck, der naechste Zugriff fuehrte zum Absturz (Sprechblasen, Logos in Figuren). Der HD-Code kopiert
+  Grafiken jetzt ueber Sperre und Zeilenkopie (`HdCopySurface`). Metal selbst konnte nicht getestet werden.
+- **Retina:** Das Fenster wird ohne `SDL_WINDOW_ALLOW_HIGHDPI` erzeugt; das Spiel zeichnet daher in Punkt-Aufloesung,
+  macOS skaliert hoch. HD bringt trotzdem mehr Schaerfe, aber nicht die volle Retina-Aufloesung.
+
 ## HD-Grafiken von Hand erzeugen und verwenden
 
 1. Bilder aus der eigenen Spielinstallation exportieren (nur Python-Standardbibliothek noetig):

@@ -4,6 +4,10 @@
 Aufruf:
   python3 tools/hd_generate.py SPIELORDNER [Optionen]
   python3 tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur schriften
+  python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu
+
+Der Datenordner (mit gli/) wird im angegebenen Ordner gesucht, auch tief in einem Mac-.app-Paket. Dort sucht das
+Spiel auch hd/, dorthin gehoert also auch die neue AT.exe bzw. AT. --gpu nutzt CUDA (NVIDIA) oder MPS (Apple-Chip).
 
 Ablauf:
   1. Export: Grafiken (.gli/.glj) und Schriften (.mcf) der Spielkopie als PNG (tools/gli_export.py,
@@ -129,19 +133,56 @@ class Plan:
 
 # ---------------------------------------------------------------- Pfade
 
-def finde_at_ordner(spiel):
-    """Ordner mit AT.exe (Windows) bzw. AT (Linux/macOS): im Spielordner oder eine Ebene tiefer."""
-    kandidaten = [spiel] + sorted(os.path.join(spiel, d) for d in os.listdir(spiel) if os.path.isdir(os.path.join(spiel, d)))
-    for ordner in kandidaten:
+def _ordner_breitensuche(start, tiefe=8):
+    """Alle Unterordner bis zur angegebenen Tiefe, flache zuerst; hd/ und hd_assets/ werden uebersprungen."""
+    ebene = [start]
+    for _ in range(tiefe + 1):
+        naechste = []
+        for ordner in ebene:
+            yield ordner
+            try:
+                eintraege = sorted(os.listdir(ordner))
+            except OSError:
+                continue
+            naechste += [os.path.join(ordner, d) for d in eintraege
+                         if d.lower() not in ("hd", "hd_assets", "models") and os.path.isdir(os.path.join(ordner, d))]
+        ebene = naechste
+
+
+def finde_datenordner(spiel):
+    """Ordner mit den Spieldaten (enthaelt gli/ mit .gli-Dateien). Dort sucht das Spiel auch hd/: AT bzw. AT.exe muss
+    in diesem Ordner liegen. Beim Mac-Bundle der GOG-Version liegt er tief im .app-Paket."""
+    for ordner in _ordner_breitensuche(spiel):
         try:
-            dateien = os.listdir(ordner)
+            gli = [d for d in os.listdir(ordner) if d.lower() == "gli" and os.path.isdir(os.path.join(ordner, d))]
         except OSError:
             continue
-        for f in dateien:
-            if f.lower() == "at.exe" or f == "AT":
-                if os.path.isfile(os.path.join(ordner, f)):
+        for d in gli:
+            try:
+                if any(f.lower().endswith(".gli") for f in os.listdir(os.path.join(ordner, d))):
                     return ordner
+            except OSError:
+                pass
     return None
+
+
+def hat_at(ordner):
+    try:
+        return any((f.lower() == "at.exe" or f == "AT") and os.path.isfile(os.path.join(ordner, f)) for f in os.listdir(ordner))
+    except OSError:
+        return False
+
+
+def waehle_geraet(torch, gpu):
+    """--gpu: CUDA (Windows/Linux, NVIDIA), sonst MPS (Mac mit Apple-Chip), sonst CPU. Liefert (geraet, meldung)."""
+    if not gpu:
+        return "cpu", None
+    if torch.cuda.is_available():
+        return "cuda", f"Rechne auf der Grafikkarte (CUDA): {torch.cuda.get_device_name(0)}"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps", "Rechne auf dem Apple-Grafikchip (MPS)"
+    return "cpu", "Hinweis: --gpu angegeben, aber weder CUDA noch MPS ist verfuegbar. Rechne auf der CPU."
 
 
 def finde_modell(kuerzel, args, spiel, at_ordner):
@@ -151,7 +192,8 @@ def finde_modell(kuerzel, args, spiel, at_ordner):
         return direkt if os.path.isfile(direkt) else None
     orte = [args.modelle] if args.modelle else []
     orte += [os.path.join(os.getcwd(), "models"), os.path.join(REPO, "models"),
-             os.path.join(at_ordner, "models"), os.path.join(spiel, "models")]
+             os.path.join(at_ordner, "models"), os.path.join(spiel, "models"),
+             os.path.join(os.path.abspath(os.path.expanduser(args.spiel)), "models")]
     for ort in orte:
         if not ort or not os.path.isdir(ort):
             continue
@@ -271,10 +313,10 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
                 verfahren, modell, ink, bg, par, bekannt = plan.schrift(name)
                 if not bekannt:
                     unbekannte_schriften.append(name)
-                a = Auftrag(quelle, os.path.join(ziel, rel), rel, verfahren, modell, "schriften", ink, bg, par)
+                a = Auftrag(quelle, os.path.join(ziel, *rel.split("/")), rel, verfahren, modell, "schriften", ink, bg, par)
             else:
                 verfahren, modell, kat = plan.bild(rel[:-len(".png")])
-                a = Auftrag(quelle, os.path.join(ziel, rel), rel, verfahren, modell, kat)
+                a = Auftrag(quelle, os.path.join(ziel, *rel.split("/")), rel, verfahren, modell, kat)
             if a.kategorie in kategorien:
                 auftraege.append(a)
     if unbekannte_schriften:
@@ -332,8 +374,9 @@ class Cache:
 
     def get(self, k):
         rel = self.map.get(k)
-        if rel and os.path.exists(os.path.join(self.ziel, rel)):
-            return os.path.join(self.ziel, rel)
+        pfad = os.path.join(self.ziel, *rel.split("/")) if rel else None
+        if pfad and os.path.exists(pfad):
+            return pfad
         return None
 
     def put(self, k, rel):
@@ -375,11 +418,12 @@ ARGS = None
 def main():
     global ARGS
     ap = argparse.ArgumentParser(description="HD-Paket (4x) aus der eigenen Spielkopie erzeugen")
-    ap.add_argument("spiel", help="Ordner der Spielinstallation (mit den .gli-Dateien)")
+    ap.add_argument("spiel", help="Ordner der Spielinstallation (oder darueber, z. B. das .app-Paket auf dem Mac)")
     ap.add_argument("--ausgabe", help="Zielordner hd/ (Standard: hd/ neben der AT.exe)")
     ap.add_argument("--arbeit", help="Arbeitsordner fuer Export und Cache (Standard: hd_assets/ neben hd/)")
     ap.add_argument("--nur", help="nur diese Kategorien, mit Komma getrennt: " + ", ".join(KATEGORIEN))
-    ap.add_argument("--gpu", action="store_true", help="mit CUDA rechnen, falls vorhanden (nicht bitgleich zur CPU)")
+    ap.add_argument("--gpu", action="store_true",
+                    help="auf der Grafikkarte rechnen: CUDA (NVIDIA) oder MPS (Mac mit Apple-Chip), sonst CPU; nicht bitgleich zur CPU")
     ap.add_argument("--threads", type=int, default=4, help="CPU-Threads fuer torch (Standard 4, wie beim Referenzpaket)")
     ap.add_argument("--modelle", help="Ordner mit den Modelldateien (sonst models/ suchen)")
     ap.add_argument("--ultrasharp", help="Pfad zu 4x-UltraSharp.pth")
@@ -396,16 +440,21 @@ def main():
     else:
         kategorien = set(KATEGORIEN)
 
-    spiel = os.path.abspath(args.spiel)
+    spiel = os.path.abspath(os.path.expanduser(args.spiel))
     if not os.path.isdir(spiel):
         raise SystemExit(f"Spielordner nicht gefunden: {spiel}")
-    at_ordner = finde_at_ordner(spiel)
-    if at_ordner is None:
-        at_ordner = spiel
-        if not args.ausgabe:
-            print(f"Hinweis: keine AT.exe bzw. AT gefunden, hd/ wird in den Spielordner gelegt: {spiel}")
-    ziel = os.path.abspath(args.ausgabe or os.path.join(at_ordner, "hd"))
-    arbeit = os.path.abspath(args.arbeit or os.path.join(os.path.dirname(ziel), "hd_assets"))
+    if args.gpu:
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")  # vor dem Import von torch: fehlende MPS-Operationen auf der CPU
+    daten = finde_datenordner(spiel)
+    if daten is None:
+        raise SystemExit(f"Keine Spieldaten gefunden (Ordner gli/ mit .gli-Dateien) in {spiel}")
+    at_ordner = daten
+    if not args.ausgabe and not hat_at(daten):
+        print(f"Hinweis: Im Datenordner liegt noch keine AT.exe bzw. AT. Das Spiel sucht hd/ neben dem Programm; "
+              f"die neue AT.exe bzw. AT gehoert deshalb in diesen Ordner: {daten}")
+    spiel = daten  # nur aus dem Datenordner exportieren (das Mac-Bundle enthaelt mehr als die Spieldaten)
+    ziel = os.path.abspath(os.path.expanduser(args.ausgabe) if args.ausgabe else os.path.join(at_ordner, "hd"))
+    arbeit = os.path.abspath(os.path.expanduser(args.arbeit) if args.arbeit else os.path.join(os.path.dirname(ziel), "hd_assets"))
     original = os.path.join(arbeit, "original")
 
     print(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {', '.join(k for k in KATEGORIEN if k in kategorien)}")
@@ -449,15 +498,13 @@ def main():
         torch.manual_seed(0)
         torch.use_deterministic_algorithms(True, warn_only=True)
         torch.set_num_threads(args.threads)
-        if args.gpu:
-            if torch.cuda.is_available():
-                os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-                torch.backends.cudnn.benchmark = False
-                torch.backends.cudnn.deterministic = True
-                hm.DEVICE = "cuda"
-                print(f"Rechne auf der Grafikkarte: {torch.cuda.get_device_name(0)}")
-            else:
-                print("Hinweis: --gpu angegeben, aber CUDA ist nicht verfuegbar. Rechne auf der CPU.")
+        hm.DEVICE, meldung = waehle_geraet(torch, args.gpu)
+        if hm.DEVICE == "cuda":
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+        if meldung:
+            print(meldung)
         if hm.DEVICE == "cpu":
             print(f"Rechne auf der CPU mit {args.threads} Threads. Das ganze Paket dauert so viele Stunden; "
                   "Abbruch mit Strg+C, ein neuer Start setzt fort.")
