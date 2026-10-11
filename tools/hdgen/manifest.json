@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "scale": 4,
  "hinweis": "Nur Namen von Grafik-Chunks und Verfahren, keine Spieldaten. Pfade relativ zum Export von tools/gli_export.py bzw. tools/mcf_export.py.",
  "regeln": [
@@ -13,13 +13,13 @@
    "muster": "gli/*1.gli/*",
    "verfahren": "foto_rgb",
    "modell": "x4plus",
-   "anmerkung": "Stadtfotos Globus/Filofax"
+   "anmerkung": "Stadtfotos Globus/Filofax (am Stueck, ohne Kacheln)"
   },
   {
    "muster": "gli/*1.glj/*",
    "verfahren": "foto_rgb",
    "modell": "x4plus",
-   "anmerkung": "Stadtfotos Laptop"
+   "anmerkung": "Stadtfotos Laptop (am Stueck, ohne Kacheln)"
   },
   {
    "muster": "*",
@@ -7949,8 +7949,6 @@
   "standard": {
    "verfahren": "schrift_standard",
    "dateien": [
-    "cond_bl",
-    "norm_bl",
     "norm_drk",
     "norm_gr",
     "norm_pl",
@@ -7958,7 +7956,6 @@
     "norm_ve",
     "norm_wh",
     "norm_x",
-    "small_bl",
     "small_gr",
     "small_rt",
     "small_wh",
@@ -7970,6 +7967,15 @@
     "status",
     "dlgfont3"
    ]
+  },
+  "standard_v1": {
+   "verfahren": "schrift_standard_v1",
+   "dateien": [
+    "cond_bl",
+    "norm_bl",
+    "small_bl"
+   ],
+   "anmerkung": "Vorgaengerfassung von schrift_standard: Farbe immer per Modell (kein bikubischer Zweig bei <= 3 Farben)"
   },
   "eingebackener_hintergrund": {
    "verfahren": "schrift_projektion",

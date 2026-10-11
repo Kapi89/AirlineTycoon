@@ -15,8 +15,8 @@ Verfahren (Namen wie in hd_manifest.json):
   deckend_rgba     deckend gezeichnete Sprites: Modell, Alpha = 255
   colorkey_rgba    Sprites mit Colorkey (Schwarz = durchsichtig): Loecher auffuellen, Modell,
                    Alpha = weiche Lanczos-Maske des 1x-Colorkeys
-  foto_rgb         Stadtfotos: Modell x4plus, RGB, reines Schwarz -> (1,1,1)
-  schrift_standard / schrift_projektion / schrift_bikubisch   Schriften (.mcf-Glyphenblaetter)
+  foto_rgb         Stadtfotos: Modell x4plus am Stueck (ohne Kacheln), RGB, reines Schwarz -> (1,1,1)
+  schrift_standard / schrift_standard_v1 / schrift_projektion / schrift_bikubisch   Schriften (.mcf-Glyphenblaetter)
 """
 import hashlib, os, sys
 import numpy as np
@@ -110,8 +110,10 @@ def m_colorkey_rgba(model, im):
 
 
 def m_foto_rgb(model, im):
+    """Stadtfotos am Stueck durchs Modell, ohne Kacheln (so ist das Referenzpaket entstanden; mit 128er-Kacheln
+    weichen Fotos ueber 128 px ab). Die Fotos sind klein (hoechstens etwa 165x164 px)."""
     a = np.asarray(im.convert('RGB')).astype(np.float32) / 255
-    r = (upscale(model, a) * 255).round().astype(np.uint8)
+    r = (_run(model, a) * 255).round().astype(np.uint8)
     r[r.sum(2) == 0] = 1                           # kein reines Schwarz (Spiel remappt 0 -> 1)
     return Image.fromarray(r, 'RGB')
 
@@ -137,7 +139,7 @@ def _run(model, a):
         return model(x.to(DEVICE)).cpu()[0].permute(1, 2, 0).clamp(0, 1).numpy()
 
 
-def m_schrift_standard(model, im):
+def m_schrift_standard(model, im, farbe_bikubisch=True):
     """Form per Modell auf der Binaermaske (geschaerft, gain 2.0); Farbe per Modell bei > 3 Farben,
     sonst bikubisch. Gleiche Glyphenformen werden zwischengespeichert."""
     im = np.asarray(im.convert('RGBA')); W = im.shape[1]; H = im.shape[0] // GLYPHS
@@ -148,7 +150,7 @@ def m_schrift_standard(model, im):
             continue
         mask = g[..., 3] == 0
         col = fill_holes(g[..., :3].astype(np.float32) / 255, mask)
-        if len(np.unique(g[~mask][:, :3], axis=0)) > 3:
+        if not farbe_bikubisch or len(np.unique(g[~mask][:, :3], axis=0)) > 3:
             rc = _run(model, np.pad(col, ((P, P), (P, P), (0, 0)), mode='edge'))[P * 4:-P * 4, P * 4:-P * 4]
         else:
             rc = np.asarray(Image.fromarray((col * 255).astype(np.uint8)).resize((W * 4, H * 4), Image.BICUBIC)).astype(np.float32) / 255
@@ -159,6 +161,12 @@ def m_schrift_standard(model, im):
         ra = np.clip((acache[k] - 0.5) * 2.0 + 0.5, 0, 1)
         out[i * H * 4:(i + 1) * H * 4] = np.dstack([(rc * 255).round(), (ra * 255).round()]).astype(np.uint8)
     return Image.fromarray(out, 'RGBA')
+
+
+def m_schrift_standard_v1(model, im):
+    """Vorgaengerfassung von schrift_standard (cond_bl, norm_bl, small_bl im Referenzpaket): Farbe immer per
+    Modell, ohne den bikubischen Zweig bei <= 3 Farben; sonst identisch."""
+    return m_schrift_standard(model, im, farbe_bikubisch=False)
 
 
 def _ink_t(im, ink, bg):

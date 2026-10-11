@@ -31,7 +31,8 @@ Dateien:
 | `ultrasharp` | 4x-UltraSharp.pth (Kim2091, OpenModelDB) | CC BY-NC-SA 4.0, nur nicht-kommerziell | alles außer Stadtfotos |
 | `x4plus` | RealESRGAN_x4plus.pth (xinntao/Real-ESRGAN, Release v0.1.0) | BSD-3-Clause | Stadtfotos |
 
-Geladen werden sie mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px).
+Geladen werden sie mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px). Ausnahme: Die
+Stadtfotos (`foto_rgb`) gehen am Stück durchs Modell, ohne Kacheln.
 
 ## Verfahren
 
@@ -40,7 +41,7 @@ Geladen werden sie mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, R
 | `deckend_rgb` | Raum-Hintergründe (54) | Modell auf das ganze Bild, RGB |
 | `deckend_rgba` | deckend gezeichnete Sprites (`BlitFrom`) | Modell, Alpha 255 |
 | `colorkey_rgba` | Sprites mit Colorkey, UI, Kiosk, Hallen-Bausteine | Schwarz = durchsichtig. Löcher aus Nachbarn auffüllen, dann Modell. Alpha = Lanczos-Maske, geschärft `clip((a−0,5)·1,5+0,5)` |
-| `foto_rgb` | Stadtfotos `*1.gli` und `*1.glj` (199) | Modell x4plus, RGB, reines Schwarz → (1,1,1), weil das Spiel 0 → 1 remappt |
+| `foto_rgb` | Stadtfotos `*1.gli` und `*1.glj` (199) | Modell x4plus **am Stück, ohne Kacheln** (Fotos höchstens 165×164 px), RGB, reines Schwarz → (1,1,1), weil das Spiel 0 → 1 remappt |
 | `auto` | alles ohne Eintrag | `colorkey_rgba`, wenn das 1x-Bild reines Schwarz enthält, sonst `deckend_rgba` |
 
 Bilder kleiner als 4 px werden pixelgenau vergrößert statt durchs Modell geschickt.
@@ -49,15 +50,18 @@ Bilder kleiner als 4 px werden pixelgenau vergrößert statt durchs Modell gesch
 
 | Verfahren | Schriften | Kern |
 |---|---|---|
-| `schrift_standard` | norm_*, small_*, stat_*, status, cond_bl, dlgfont3 | Form per Modell auf der Binärmaske (gain 2,0). Farbe per Modell bei mehr als 3 Farben, sonst bikubisch |
+| `schrift_standard` | norm_* und small_* (außer norm_bl, small_bl), stat_*, status, dlgfont3 | Form per Modell auf der Binärmaske (gain 2,0). Farbe per Modell bei mehr als 3 Farben, sonst bikubisch |
+| `schrift_standard_v1` | cond_bl, norm_bl, small_bl | Vorgängerfassung von `schrift_standard`: Farbe **immer** per Modell (kein bikubischer Zweig bei ≤ 3 Farben), sonst identisch |
 | `schrift_projektion` | inkfont, dlgfont1, dlgfont2 | Hintergrund ist eingebacken. Tintenanteil per Projektion zwischen Tinten- und Hintergrundfarbe, per Modell vergrößert (gain 1,6). Farbe konstant = Tinte |
 | `schrift_bikubisch` | bank_bl, bank_ro | Wie Projektion, aber bikubisch vergrößert, gain 2,5, off 0,1. Kein Modell, lesbarer |
 
 Tinten- und Hintergrundfarben stehen im Manifest. dlgfont3 sieht nur ähnlich aus (gelbe Schrift mit
 dunkler Kontur) und muss `schrift_standard` bekommen; mit Projektion wird sie einfarbig schwarz.
 
-Hinweis: Die beiden Schrift-Verfahren mit Modell sind beschrieben, aber nicht bitgenau nachgeprüft.
-Die Bild-Verfahren und `schrift_bikubisch` sind es.
+Bitgenau nachgeprüft mit dem Generator (H18b) auf echten Spieldaten: alle Schriften, darunter Bank,
+Projektion (inkfont, dlgfont1/2), dlgfont3 und `schrift_standard_v1` (small_bl), und die Stadtfotos. Korrigiert
+gegenüber der ersten Fassung dieses Rezepts: Stadtfotos am Stück statt in 128er-Kacheln (vorher wichen Fotos
+über 128 px ab) und `schrift_standard_v1` für cond_bl, norm_bl, small_bl.
 
 ## Was die Engine erwartet (Kurzfassung aus ASSETS.md)
 
