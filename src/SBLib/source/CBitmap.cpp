@@ -176,6 +176,22 @@ void SB_CBitmapCore::RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, S
     }
 }
 
+// Horizontal gespiegelter Colorkey-Blit (FlipBlitFromT, H19): 1x kommt aus der gespiegelten Kopie, die HD-Textur der
+// Bitmap wird auf der GPU gespiegelt gezeichnet. Ohne eigene HD-Textur bleibt es beim 1x-Blit wie bisher.
+void SB_CBitmapCore::RecordHdFlipped(SB_CBitmapCore *target, SLONG x, SLONG y) {
+    if (gHdPrimary == nullptr || target == nullptr) {
+        return;
+    }
+    target->HdCheck = true;
+    if (HdTexture == nullptr && !HdName.empty()) {
+        HdMissingSurface(HdName, lpDDSurface, " (gespiegelt)");
+        HdName.clear();
+    }
+    if (HdTexture != nullptr && HdList == nullptr && flippedBufferSurface != nullptr) {
+        gHdPrimary->RecordHdFlipped(this, target, flippedBufferSurface, x, y);
+    }
+}
+
 void SB_CBitmapCore::HdBeforeWrite() {
     if (gHdPrimary != nullptr && gHdPrimary != this && HdTexture != nullptr && HdList == nullptr && SB_GetRenderScale() > 1) {
         gHdPrimary->SeedHdList(this);
@@ -1547,7 +1563,7 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
 
 // Blit aus einer Textur: Sprite mit HD-Textur oder Zeichen aus einem HD-Glyphenblatt (H7)
 void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
-                                    bool glyph, SB_CBitmapCore *core) {
+                                    bool glyph, SB_CBitmapCore *core, bool flipX) {
     SDL_Surface *ts = target->lpDDSurface;
     SDL_Rect sr, dr, area;
     if (ts == nullptr || src == nullptr || tex == nullptr || SB_GetRenderScale() <= 1 || !CanUseHd() || !HdBlitArea(src, ts, srcRect, x, y, sr, dr, area)) {
@@ -1571,11 +1587,12 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     e.TexAlpha = HdAlphaTex.count(tex) != 0;
     e.Glyph = glyph;
     e.Core = core;
+    e.FlipX = flipX;
     if (target != this && !glyph) {
         // Dieselbe Grafik an dieselbe Stelle (z. B. Logo in der Stimmungsblase, jedes Frame): der fruehere
         // gleiche Eintrag wird vom neuen vollstaendig ueberdeckt und faellt weg, die Liste waechst nicht
         auto same = [&e](const SB_HdEntry &o) {
-            return o.Kind == 0 && o.Replay == nullptr && o.Src == e.Src && o.Tex == e.Tex && o.ColorKey == e.ColorKey && o.SrcRect.x == e.SrcRect.x &&
+            return o.Kind == 0 && o.Replay == nullptr && o.Src == e.Src && o.Tex == e.Tex && o.ColorKey == e.ColorKey && o.FlipX == e.FlipX && o.SrcRect.x == e.SrcRect.x &&
                    o.SrcRect.y == e.SrcRect.y && o.SrcRect.w == e.SrcRect.w && o.SrcRect.h == e.SrcRect.h && o.Dst.x == e.Dst.x && o.Dst.y == e.Dst.y &&
                    o.Clip.x == e.Clip.x && o.Clip.y == e.Clip.y && o.Clip.w == e.Clip.w && o.Clip.h == e.Clip.h;
         };
@@ -1583,6 +1600,17 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     }
     list->push_back(e);
     HdLimit(*list, target == this ? 16384 : 4096);
+}
+
+// Gespiegelter Blit (H19): flipped ist die gespiegelte 1x-Kopie von src (die der 1x-Blit benutzt hat). Sie ist die
+// Quelle fuer die Referenz; gezeichnet wird die ungespiegelte HD-Textur von src mit SDL_FLIP_HORIZONTAL.
+void SB_CPrimaryBitmap::RecordHdFlipped(SB_CBitmapCore *src, SB_CBitmapCore *target, SDL_Surface *flipped, SLONG x, SLONG y) {
+    if (flipped == nullptr || src->lpDDSurface == nullptr || flipped->w != src->lpDDSurface->w || flipped->h != src->lpDDSurface->h ||
+        !HdCoreStillValid(src)) {
+        return;
+    }
+    RecordHdTex(target, flipped, src->HdTexture, SDL_Rect{0, 0, flipped->w, flipped->h}, x, y, SDL_HasColorKey(flipped) == SDL_TRUE, false, src,
+                true);
 }
 
 // Passt die HD-Textur einer Bitmap noch zu ihren 1x-Pixeln? (fuer Eintraege, die ueber Frames bestehen)
@@ -2411,6 +2439,12 @@ void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Re
     }
     SDL_SetTextureBlendMode(b.Tex, blend ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
     SDL_SetTextureAlphaMod(b.Tex, b.Alpha);
+    if (b.FlipX && b.Src != nullptr) {
+        // Gespiegelter Blit (H19): SrcRect gilt in der gespiegelten 1x-Kopie, die Textur ist ungespiegelt
+        const SDL_Rect fsrc{(b.Src->w - b.SrcRect.x - b.SrcRect.w) * ts, src.y, src.w, src.h};
+        SDL_RenderCopyExF(lpDD, b.Tex, &fsrc, &dst, 0.0, nullptr, SDL_FLIP_HORIZONTAL);
+        return;
+    }
     SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
 }
 
