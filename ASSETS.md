@@ -158,6 +158,13 @@ RGB ohne Alphakanal. Das Spiel ersetzt im Foto Schwarz durch (fast) Schwarz, dam
 die HD-Fassung wird dann ebenfalls deckend verwendet (reines Schwarz in der PNG am besten als (1,1,1)). Im Log
 steht je Foto einmal `Stadtfoto <name>: in HD` bzw. `in 1x`.
 
+### Gespiegelte Figuren (H19)
+
+Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden horizontal gespiegelt gezeichnet
+(`FlipBlitFromT`). Die HD-Ebene nimmt dafuer die vorhandene HD-Textur der Figur und zeichnet sie auf der GPU gespiegelt
+(`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
+ist nicht noetig.
+
 ### Diagnose (HD-Ebene)
 
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
