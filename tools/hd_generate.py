@@ -304,7 +304,7 @@ class Auftrag:
 
 
 def auftraege_sammeln(original, ziel, plan, kategorien):
-    auftraege, unbekannte_schriften = [], []
+    auftraege, unbekannte_schriften, figuren = [], [], 0
     for root, dirs, files in os.walk(original):
         dirs.sort()
         for f in sorted(files):
@@ -312,6 +312,9 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
                 continue
             quelle = os.path.join(root, f)
             rel = os.path.relpath(quelle, original).replace(os.sep, "/")
+            if ".pol/" in rel:
+                figuren += 1  # Figuren der Halle (tools/pol_export.py): Verfahren folgt mit H21b
+                continue
             if f.endswith(".mcf.png"):
                 name = f[:-len(".mcf.png")]
                 verfahren, modell, ink, bg, par, bekannt = plan.schrift(name)
@@ -323,6 +326,8 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
                 a = Auftrag(quelle, os.path.join(ziel, *rel.split("/")), rel, verfahren, modell, kat)
             if a.kategorie in kategorien:
                 auftraege.append(a)
+    if figuren:
+        print(f"Hinweis: {figuren} Figuren-PNGs (.pol) im Export werden noch nicht hochgerechnet (folgt mit H21b).")
     if unbekannte_schriften:
         print(f"Hinweis: {len(unbekannte_schriften)} Schrift(en) ohne Eintrag im Manifest, Verfahren schrift_standard: "
               + ", ".join(unbekannte_schriften))

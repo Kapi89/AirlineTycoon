@@ -6,6 +6,9 @@
 #include "HLine.h"
 
 #include "global.h"
+
+#include <SDL_image.h>
+#include <filesystem>
 #include "helper.h"
 #include "Proto.h"
 
@@ -1128,5 +1131,112 @@ void UpdateHLinePool() {
 
     if (DontSaveSkeletons == 0) {
         SkelettPool.Save();
+    }
+}
+
+//--------------------------------------------------------------------------------------------
+// H21a: Prueft die PNGs von tools/pol_export.py gegen das, was CHLObj::BlitAt zeichnet. Jedes Bild wird zweimal
+// auf verschiedene Hintergruende gezeichnet: wo beide gleich sind, hat BlitAt geschrieben (PNG deckend, gleiche
+// Farbe in RGB565), sonst nicht (PNG durchsichtig). Ergebnis und Abweichungen stehen im Log (debug.txt).
+//--------------------------------------------------------------------------------------------
+static std::string PolChunkName(__int64 graphicID) {
+    char raw[9] = {};
+    memcpy(raw, &graphicID, 8);
+    std::string name(raw);
+    for (auto &c : name) {
+        if (!isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    return name.empty() ? "_" : name;
+}
+
+void CHLPool::CheckExport(const std::string &dir, ExportCheck &result) {
+    namespace fs = std::filesystem;
+    const SLONG wasLoaded = Loaded;
+    if (Load() == 0) {
+        return;
+    }
+
+    std::string pool = (LPCTSTR)Filename;
+    std::string folder = fs::path((LPCTSTR)FullFilename(Filename, GliPath)).parent_path().filename().string();
+    for (auto *str : {&pool, &folder}) {
+        for (auto &c : *str) {
+            c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        }
+    }
+
+    SLONG shown = 0;
+    for (SLONG n = 0; n < HLObjects.AnzEntries(); n++) {
+        CHLObj &obj = HLObjects[n];
+        result.Objects++;
+        const SLONG w = obj.Size.x;
+        const SLONG h = obj.Size.y;
+        if (w <= 0 || h <= 0) {
+            result.Ok++; // leeres Bild: der Export schreibt keine PNG
+            continue;
+        }
+        const std::string name = PolChunkName(obj.graphicID);
+        const fs::path file = fs::path(dir) / folder / pool / (name + ".png");
+
+        SDL_Surface *png = IMG_Load(file.string().c_str());
+        SDL_Surface *rgba = png != nullptr ? SDL_ConvertSurfaceFormat(png, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
+        if (png != nullptr) {
+            SDL_FreeSurface(png);
+        }
+        if (rgba == nullptr) {
+            result.Missing++;
+            if (shown++ < 10) {
+                AT_Log_I("HD", "Pol-Pruefung %s: %s fehlt", pool.c_str(), file.string().c_str());
+            }
+            continue;
+        }
+
+        // Zweimal zeichnen: auf 0x0000 und auf 0xFFFF
+        std::vector<UWORD> a(size_t(w) * h), b(size_t(w) * h);
+        for (SLONG pass = 0; pass < 2; pass++) {
+            SBBM bm(w, h);
+            bm.pBitmap->Clear(SB_Hardwarecolor(pass == 0 ? 0x0000 : 0xFFFF));
+            obj.BlitAt(bm.pBitmap, XY(0, 0));
+            SB_CBitmapKey key(*bm.pBitmap);
+            for (SLONG y = 0; y < h; y++) {
+                const auto *row = reinterpret_cast<const UWORD *>(static_cast<const UBYTE *>(key.Bitmap) + y * key.lPitch);
+                std::copy(row, row + w, (pass == 0 ? a : b).begin() + y * w);
+            }
+        }
+
+        SLONG diff = 0;
+        if (rgba->w != w || rgba->h != h) {
+            diff = w * h;
+        } else {
+            SDL_LockSurface(rgba);
+            for (SLONG y = 0; y < h; y++) {
+                const auto *p = static_cast<const Uint8 *>(rgba->pixels) + y * rgba->pitch;
+                for (SLONG x = 0; x < w; x++, p += 4) {
+                    const size_t i = size_t(y) * w + x;
+                    const bool written = a[i] == b[i];
+                    const bool opaque = p[3] != 0;
+                    const UWORD v = UWORD(((p[0] >> 3) << 11) | ((p[1] >> 2) << 5) | (p[2] >> 3));
+                    if (written != opaque || (written && v != a[i])) {
+                        diff++;
+                    }
+                }
+            }
+            SDL_UnlockSurface(rgba);
+        }
+        SDL_FreeSurface(rgba);
+
+        if (diff == 0) {
+            result.Ok++;
+        } else {
+            result.Different++;
+            if (shown++ < 10) {
+                AT_Log_I("HD", "Pol-Pruefung %s: %s weicht in %d von %d Pixeln ab", pool.c_str(), name.c_str(), diff, w * h);
+            }
+        }
+    }
+
+    if (wasLoaded < 2) {
+        Unload();
     }
 }

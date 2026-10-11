@@ -107,6 +107,31 @@ Ergebnisse gleichwertig, aber nicht bitgleich zur CPU.
 - **Retina:** Das Fenster wird ohne `SDL_WINDOW_ALLOW_HIGHDPI` erzeugt; das Spiel zeichnet daher in Punkt-Aufloesung,
   macOS skaliert hoch. HD bringt trotzdem mehr Schaerfe, aber nicht die volle Retina-Aufloesung.
 
+## Figuren der Halle (.pol, ab H21a)
+
+Passagiere, Spielerfiguren und Personal in der Halle sind keine GLI-Grafiken, sondern HLine-Pools: `clan<n>.pol`
+(Laufen/Stehen), `clang<n>.pol` (Gimmicks), `clanw<n>.pol` (Warte-Gimmicks) und `skelett.pol` (Roentgenbild) im Ordner
+`gli/`. Jedes Bild besteht aus Pixelreihen mit 8-Bit-Farbindizes und einer Palette je Pool; Teile der Pixel liegen in
+einem Eltern-Pool (meist dem des naechsten Clans, laut `data/clan.csv`). Bis H21b werden sie in 1x gezeichnet.
+
+Export (nur Python-Standardbibliothek):
+
+```sh
+python3 tools/pol_export.py /pfad/zum/spiel --nur-zaehlen   # Bilder je Pool, Groessen, identische Bilder
+python3 tools/pol_export.py /pfad/zum/spiel                 # PNGs nach hd_assets/original/gli/<pool>.pol/<ID>.png
+```
+
+- RGBA; durchsichtig ist, was in keiner Pixelreihe vorkommt (Schwarz bleibt deckend).
+- Die Ausgabe muss in einem Ordner `hd_assets/` liegen (Standard: `hd_assets/original` neben den Spieldaten, derselbe
+  Exportordner wie beim HD-Generator). Exportierte PNGs und `.pol`-Dateien duerfen nie ins Git (Asset-Guard).
+- Der HD-Generator laesst diese PNGs bis H21b aus (Hinweis im Lauf).
+
+Pruefung gegen die Engine: In `AT.json` `"OptionHdPolCheck": 1` setzen und das Spiel starten. Beim Laden der Figuren
+zeichnet die Engine jedes Bild mit `CHLObj::BlitAt` und vergleicht es mit der PNG in `hd_assets/original` neben der
+`AT.exe`. Im Log (debug.txt) steht je Pool eine Zeile und am Ende
+`Pol-Pruefung gesamt: N Bilder, N gleich, 0 fehlen, 0 abweichend -> Abweichung 0`; bei Abweichungen die ersten
+betroffenen Bilder. Danach die Option wieder auf `0` setzen (der Vergleich laedt alle Pools und kostet Startzeit).
+
 ## HD-Grafiken von Hand erzeugen und verwenden
 
 1. Bilder aus der eigenen Spielinstallation exportieren (nur Python-Standardbibliothek noetig):
