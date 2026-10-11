@@ -8,6 +8,10 @@
 #include "sbl.h"
 #include "TeakLibW.h"
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+
 class CHLPool;
 
 #pragma pack(push, pragma_gene)
@@ -67,6 +71,10 @@ class CHLObj {
     void BlitAt(SB_CBitmapCore *pBitmap, SLONG tx, SLONG ty) { BlitAt(pBitmap, XY(tx, ty)); }
     void BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target);
     void BlitLargeAt(SB_CBitmapCore *pBitmap, SLONG tx, SLONG ty) { BlitLargeAt(pBitmap, XY(tx, ty)); }
+
+    // H21b: HD-Figuren. Nur solange HdHall gesetzt ist (Personen in der Halle), sucht BlitAt eine HD-Fassung.
+    static bool HdHall;
+    std::shared_ptr<SDL_Surface> Render1x(); // genau die Pixel von BlitAt, Rest = Colorkey (eine Farbe, die nicht vorkommt)
 
     friend TEAKFILE &operator<<(TEAKFILE &File, const CHLObj &obj) {
         File.Write((const UBYTE *)&obj.graphicID, 8);
@@ -142,6 +150,20 @@ class CHLPool {
     void CheckExport(const std::string &dir, ExportCheck &result);
     const CString &GetFilename() const { return Filename; }
 
+    // H21b: HD-Figuren aus hd/<ordner>/<pool>/<ID>.png (s-fache Groesse), beim ersten Zeichnen geladen
+    struct HdFigure {
+        std::shared_ptr<SDL_Surface> Src1x; // 1x-Fassung mit Colorkey, die Referenz spielt sie nach
+        std::shared_ptr<SDL_Texture> Tex;   // leer: keine passende HD-Datei, bleibt 1x (Pools werden flach kopiert)
+    };
+    const HdFigure *GetHdFigure(CHLObj &obj);
+
+  private:
+    void ForgetHd();
+    std::unordered_map<SLONG, HdFigure> HdFigures; // je Objekt-Index
+    std::string HdDir;                             // leer: keine HD-Figuren fuer diesen Pool
+    bool HdChecked{false};
+
+  public:
     friend class CHLObj;
 };
 

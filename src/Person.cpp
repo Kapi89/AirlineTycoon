@@ -362,7 +362,9 @@ void CLAN::BlitAt(SBPRIMARYBM &Offscreen, SLONG Dir, SLONG Phase, XY ScreenPos, 
 
             // Person blitten:
             AnzPeopleOnScreen++;
+            CHLObj::HdHall = true; // H21b: HD-Figuren nur in der Halle
             Offscreen.BlitFromT(*pbm, ScreenPos - Size + Offset);
+            CHLObj::HdHall = false;
         } else if (ScreenPos.x > -260 && ScreenPos.x < HallRightClip() + 250) {
             AnzPeopleOnScreen++;
         }
@@ -391,11 +393,13 @@ void CLAN::BlitSkelettAt(SBPRIMARYBM &Offscreen, SLONG Dir, SLONG Phase, XY Scre
         // Person blitten:
         XY Size = XY(pbm->Size.x / 2, pbm->Size.y - 1);
 
+        CHLObj::HdHall = true; // H21b: HD-Figuren nur in der Halle
         if (Dir == 3 || (Dir == 8 && Phase == 3)) {
             Offscreen.BlitFromT(*pbm, ScreenPos - Size + XY(-SkelettOffset.x, SkelettOffset.y)); // Nach westen
         } else {
             Offscreen.BlitFromT(*pbm, ScreenPos - Size + SkelettOffset);
         }
+        CHLObj::HdHall = false;
     }
 }
 

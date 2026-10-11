@@ -4,6 +4,12 @@
  "hinweis": "Nur Namen von Grafik-Chunks und Verfahren, keine Spieldaten. Pfade relativ zum Export von tools/gli_export.py bzw. tools/mcf_export.py.",
  "regeln": [
   {
+   "muster": "gli/*.pol/*",
+   "verfahren": "figur_rgba",
+   "modell": "x4plus",
+   "anmerkung": "Figuren der Halle (tools/pol_export.py): Alpha aus dem Export, Kante per Modell"
+  },
+  {
    "muster": "gli/glbrick*.gli/*",
    "verfahren": "colorkey_rgba",
    "modell": "ultrasharp",
