@@ -151,6 +151,7 @@ struct SB_HdEntry {
     SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans), 4 Text-Hervorhebung
     bool Glyph{false};                 // Zeichen aus einem HD-Glyphenblatt (H7)
     bool KeyZero{false};               // Pixel 0 der 1x-Quelle durchsichtig, obwohl die Quelle keinen Colorkey hat (H14)
+    bool FlipX{false};                 // gespiegelter Blit (H19): Src ist die gespiegelte 1x-Kopie, Tex wird gespiegelt gezeichnet
     SDL_Texture *Tex2{nullptr};        // Kind 3: Weiss-Schicht (Alpha = Deckkraft)
     SDL_Texture *Tex3{nullptr};        // Kind 3: deckender Rest in 1x, Alpha = Maske fuer die HD-Inhalte
     std::shared_ptr<const std::vector<SB_HdEntry>> Sub; // Kind 3: HD-Inhalte der Quelle (in Quellkoordinaten)
@@ -179,6 +180,7 @@ class SB_CBitmapCore {
     void InitClipRect(void);
     void SetClipRect(const CRect &);
     void RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
+    void RecordHdFlipped(SB_CBitmapCore *target, SLONG x, SLONG y); // horizontal gespiegelter Colorkey-Blit (H19)
     void HdWritten(const SDL_Rect *rect = nullptr, bool opaque = false); // 1x-Inhalt direkt veraendert (Clear, SetPixel, Text ...)
     void HdBeforeWrite();  // vor einem Blit/Text in diese Bitmap: eigene HD-Textur als Basiseintrag uebernehmen (H11)
     bool HdIsValid();      // eigene HD-Textur passt (noch) zu den 1x-Pixeln
@@ -353,7 +355,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void ForgetHdSurface(const SDL_Surface *hd);
     void RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey);
     void RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
-                     bool glyph = false, SB_CBitmapCore *core = nullptr);
+                     bool glyph = false, SB_CBitmapCore *core = nullptr, bool flipX = false);
+    void RecordHdFlipped(SB_CBitmapCore *src, SB_CBitmapCore *target, SDL_Surface *flipped, SLONG x, SLONG y);
     void RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect, bool colorKey);
     void KeepHdSource(SDL_Surface *src);
     void SeedHdList(SB_CBitmapCore *core);
