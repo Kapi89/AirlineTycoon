@@ -27,6 +27,72 @@ It is therefore *not* open-source in the free software sense, for more informati
 4. Start the game using the new game executable (AT.exe on Windows, AT on macOS and Linux)
 5. Enjoy!
 
+## HD-Grafiken (ab Version 2.0.0, Anleitung auf Deutsch)
+
+Ab Version 2.0.0 kann das Spiel alle Grafiken in 4-facher Aufloesung zeichnen. Die HD-Grafiken sind **nicht** im
+Download enthalten: Jede Person erzeugt sie mit `tools/hd_generate.py` aus der eigenen, gekauften Spielkopie.
+Ohne HD-Grafiken laeuft das Spiel wie bisher.
+
+### Lizenz: bitte zuerst lesen
+
+- **Spiel selbst kaufen.** Der Generator arbeitet nur mit einer eigenen Installation von Airline Tycoon Deluxe
+  (GOG oder Steam). Die Originalgrafiken gehoeren BFG / Spellbound.
+- **Das HD-Paket nur privat nutzen.** Die erzeugten Bilder sind abgeleitete Werke der Originalgrafiken. Nicht
+  weitergeben, nicht hochladen, nicht verkaufen.
+- **Modelle:** `4x-UltraSharp` steht unter CC BY-NC-SA 4.0 und darf **nur nicht-kommerziell** genutzt werden.
+  `RealESRGAN_x4plus` steht unter BSD-3-Clause. Beide laedt jede Person selbst herunter; sie liegen nicht im
+  Repository, und der Generator laedt nichts selbst aus dem Netz.
+
+### Schritt fuer Schritt
+
+1. **Spiel und Version 2.0.0 installieren** wie unter [Installation](#installation) beschrieben. Die neue `AT.exe`
+   (bzw. `AT`) liegt danach im Spielordner.
+2. **Python installieren** (3.9 oder neuer): Windows von [python.org](https://www.python.org/downloads/) (beim
+   Installieren "Add python.exe to PATH" ankreuzen), Linux ueber die Paketverwaltung, macOS z. B. mit Homebrew.
+3. **Generator holen:** dieses Repository als ZIP herunterladen (gruener Knopf "Code" -> "Download ZIP") und
+   entpacken, oder `git clone`. Gebraucht wird der Ordner `tools/`.
+4. **Python-Pakete installieren** (in einer Konsole im entpackten Ordner):
+
+   ```sh
+   pip install -r tools/hdgen/requirements.txt
+   ```
+
+   Mit NVIDIA-Grafikkarte vorher `torch` mit CUDA nach [pytorch.org](https://pytorch.org/get-started/locally/)
+   installieren; dann geht alles in Minuten statt Stunden.
+5. **Modelle besorgen** und in einen Ordner `models/` neben die `AT.exe` legen:
+   - `4x-UltraSharp.pth` von [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091,
+     CC BY-NC-SA 4.0, nur nicht-kommerziell): fuer Raeume, Oberflaeche, Hallen-Bausteine und Schriften
+   - `RealESRGAN_x4plus.pth` aus dem [Release v0.1.0 von Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)
+     (BSD-3-Clause): fuer die Stadtfotos
+
+   Findet der Generator ein Modell nicht, fragt er nach dem Pfad (oder `--ultrasharp DATEI`, `--x4plus DATEI`,
+   `--modelle ORDNER`).
+6. **Generator starten** mit dem Spielordner als Ziel:
+
+   ```sh
+   python tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe"
+   ```
+
+   Er exportiert die Grafiken, rechnet sie 4-fach hoch und legt sie in den Ordner `hd/` neben die `AT.exe`.
+   Zwischendateien liegen in `hd_assets/` daneben (kann danach geloescht werden).
+   - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
+     Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
+   - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`
+     (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
+     sofort, ob alles klappt.
+   - `--gpu` rechnet mit CUDA, falls vorhanden. `--liste` zeigt nur, was zu tun ist.
+   - Das Ergebnis ist reproduzierbar: gleiche Spielkopie, gleiche Modelle und CPU ergeben dieselben Bilder.
+7. **Im Spiel einschalten:** Das Spiel einmal starten und beenden, dann in der Datei `AT.json` neben der `AT.exe`
+   eintragen bzw. aendern:
+
+   | Option | Wert | Bedeutung |
+   |---|---|---|
+   | `OptionRenderScale` | `4` | HD-Grafiken verwenden. Muss `4` sein, weil das Paket 4-fach ist (Standard `1` = aus) |
+   | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
+   | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
+
+Technische Einzelheiten (Verfahren, Manifest, Dateinamen) stehen in [ASSETS.md](ASSETS.md).
+
 ## Building
 
 Before building, remember to clone the submodules:

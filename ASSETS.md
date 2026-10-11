@@ -4,21 +4,85 @@ Dieses Repository enthaelt nur Quellcode und Werkzeuge. Folgendes gehoert **nie*
 
 - Originaldateien von Airline Tycoon Deluxe (`.gli`, `.glj`, `.smk`, `.lbm`, `.mcf`, `.res`, `.raw`, Spieldaten-CSV usw.).
   Sie sind urheberrechtlich geschuetzt (BFG / Spellbound).
-- Daraus erzeugte Grafiken, z. B. per KI hochskalierte HD-Bilder (Ordner `hd/`, `upscaled/`, `export/`).
+- Daraus erzeugte Grafiken, z. B. per KI hochskalierte HD-Bilder (Ordner `hd/`, `hd_assets/`, `upscaled/`, `export/`).
   Sie bleiben abgeleitete Werke der Originalgrafiken.
-- KI-Modelle wie `4x-UltraSharp.pth` (Lizenz CC BY-NC-SA 4.0, nur nicht-kommerziell).
+- KI-Modelle wie `4x-UltraSharp.pth` (Lizenz CC BY-NC-SA 4.0, nur nicht-kommerziell), Ordner `models/`.
 
 Jede Person erzeugt die HD-Grafiken lokal aus ihrer eigenen, gekauften Spielkopie.
 
 ## Schutzmechanismen
 
-1. `.gitignore` schliesst Spieldateien, Asset-Ordner und Modelle aus.
+1. `.gitignore` schliesst Spieldateien, Asset-Ordner (`hd/`, `hd_assets/`, ...) und Modelle (`models/`, `*.pth`, ...) aus.
 2. Lokaler Hook blockiert Commits: `git config core.hooksPath tools/hooks`
 3. GitHub-Workflow `asset guard` prueft jeden Push und Pull Request.
 
 Pruefung von Hand: `python3 tools/asset_guard.py`
 
-## HD-Grafiken lokal erzeugen und verwenden
+## HD-Paket mit dem Generator erzeugen (ab 2.0.0)
+
+Schritt-fuer-Schritt-Anleitung fuer Spieler und Lizenzhinweise: siehe [README.md](README.md#hd-grafiken-ab-version-200-anleitung-auf-deutsch).
+Kurz:
+
+```sh
+pip install -r tools/hdgen/requirements.txt
+python3 tools/hd_generate.py /pfad/zum/spiel                 # alles
+python3 tools/hd_generate.py /pfad/zum/spiel --nur schriften   # oder stadtfotos, ui, raeume, bausteine
+```
+
+Lizenz in einem Satz: Spiel selbst kaufen, das erzeugte Paket nur privat nutzen und nicht weitergeben,
+`4x-UltraSharp` nur nicht-kommerziell (CC BY-NC-SA 4.0).
+
+### Ablauf
+
+1. **Export** aus der Spielkopie mit `tools/gli_export.py` und `tools/mcf_export.py` nach `hd_assets/original/`
+   (nur die Archive, die fuer `--nur` gebraucht werden).
+2. **Verfahren** je PNG aus `tools/hdgen/manifest.json`: zuerst der Eintrag zum Chunk (`<ordner>/<datei>/<CHUNK>`),
+   dann die erste passende Regel (Muster wie `gli/*1.gli/*`), sonst `auto`. Schriften stehen unter `schriften`;
+   eine Schrift ohne Eintrag bekommt `schrift_standard` (Hinweis im Lauf).
+3. **Hochrechnen** (4x) mit den Verfahren aus `tools/hdgen/hd_methods.py`. Das ist die Referenz-Implementierung, mit
+   der das abgenommene Paket erzeugt wurde, nur um die Wahl CPU/CUDA ergaenzt.
+4. **Ablegen** als `hd/<ordner>/<datei>/<CHUNK>.png` bzw. `hd/<ordner>/<schrift>.mcf.png` neben der `AT.exe`
+   (gesucht im Spielordner und eine Ebene tiefer; sonst der Spielordner, oder `--ausgabe`).
+
+Gleiche Eingaben werden nur einmal gerechnet: Schluessel ist die MD5 der Eingabe-PNG plus Verfahren, Modell und
+Schrift-Parameter, gemerkt in `hd_assets/hd_cache.jsonl`. Vorhandene Ausgaben werden uebersprungen; jede PNG wird
+erst unter einem Zwischennamen geschrieben und dann umbenannt, ein Abbruch hinterlaesst also keine halben Dateien.
+
+### Verfahren
+
+| Verfahren | Wofuer | Ergebnis |
+|---|---|---|
+| `deckend_rgb` | Raum-Hintergruende | Modell auf das ganze Bild, RGB |
+| `deckend_rgba` | deckend gezeichnete Sprites | Modell, Alpha 255 |
+| `colorkey_rgba` | Sprites mit Colorkey, UI, Kiosk, Hallen-Bausteine | Schwarz = durchsichtig; Loecher aus Nachbarn auffuellen, Modell; Alpha = Lanczos-Maske, geschaerft |
+| `foto_rgb` | Stadtfotos `gli/*1.gli`, `gli/*1.glj` | Modell `x4plus`, RGB, reines Schwarz -> (1,1,1) |
+| `auto` | alles ohne Eintrag | `colorkey_rgba`, wenn das Bild reines Schwarz enthaelt, sonst `deckend_rgba` |
+| `schrift_standard` | norm_*, small_*, stat_*, status, cond_bl, dlgfont3 | Form per Modell auf der Binaermaske, Farbe per Modell (> 3 Farben) oder bikubisch |
+| `schrift_projektion` | inkfont, dlgfont1, dlgfont2 | Tintenanteil per Projektion Tinte/Hintergrund, per Modell vergroessert |
+| `schrift_bikubisch` | bank_bl, bank_ro | wie Projektion, aber bikubisch (kein Modell) |
+
+Bilder kleiner als 4 px werden pixelgenau vergroessert. Kategorien fuer `--nur`: `schriften` (alle `.mcf`),
+`stadtfotos` (Verfahren `foto_rgb`), `bausteine` (`gli/glbrick*`), `raeume` (alles unter `room/`), `ui` (der Rest).
+
+### Modelle
+
+| Kuerzel | Datei | Quelle | Lizenz | Fuer |
+|---|---|---|---|---|
+| `ultrasharp` | `4x-UltraSharp.pth` | [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091) | CC BY-NC-SA 4.0, nur nicht-kommerziell | alles ausser Stadtfotos |
+| `x4plus` | `RealESRGAN_x4plus.pth` | [Real-ESRGAN v0.1.0](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0) | BSD-3-Clause | Stadtfotos |
+
+Gesucht wird in `--modelle`, dann in `models/` im aktuellen Verzeichnis, im Repository, neben der `AT.exe` und im
+Spielordner. Fehlt ein Modell, fragt der Generator nach dem Pfad bzw. nennt Quelle und Lizenz und bricht ab; er
+laedt nichts herunter. Zu jedem Modell steht die SHA-256 im Lauf, damit sich Ergebnisse vergleichen lassen.
+Geladen wird mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px).
+
+### Reproduzierbarkeit
+
+Feste Seeds, deterministische torch-Algorithmen und eine feste Thread-Zahl (`--threads`, Standard 4 wie beim
+Referenzpaket). Auf der CPU ergeben gleiche Eingaben und Modelle bitgleiche PNGs. Mit `--gpu` (CUDA) sind die
+Ergebnisse gleichwertig, aber nicht bitgleich zur CPU.
+
+## HD-Grafiken von Hand erzeugen und verwenden
 
 1. Bilder aus der eigenen Spielinstallation exportieren (nur Python-Standardbibliothek noetig):
 
