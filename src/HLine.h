@@ -135,6 +135,13 @@ class CHLPool {
     CHLObj *GetHLObj(__int64 graphicID);
     CHLObj *GetHLObj(const CString &String);
 
+    // H21a: Export-PNGs von tools/pol_export.py gegen CHLObj::BlitAt pruefen (Debug, OptionHdPolCheck)
+    struct ExportCheck {
+        SLONG Objects{0}, Ok{0}, Missing{0}, Different{0};
+    };
+    void CheckExport(const std::string &dir, ExportCheck &result);
+    const CString &GetFilename() const { return Filename; }
+
     friend class CHLObj;
 };
 
