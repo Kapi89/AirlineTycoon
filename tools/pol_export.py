@@ -331,6 +331,46 @@ def load_pools(game):
     return pools
 
 
+def prepare(game, report=print):
+    """Pools unter game laden und mit ihren Eltern-Pools verbinden; Warnungen und Hinweise gehen an report."""
+    pools = load_pools(game)
+    if not pools:
+        return pools
+    csv = find_file(game, "clan.csv")
+    table = None
+    if csv:
+        try:
+            table = read_clan_table(csv)
+        except (PolError, struct.error, ValueError) as exc:
+            report(f"WARNUNG: {csv} unlesbar ({exc})")
+    for h in link_pools(pools, table, csv is not None):
+        report(h)
+    return pools
+
+
+def export(game, out, force=False, report=print):
+    """Alle Figuren unter game nach out/<ordner>/<pool>/<ID>.png (fuer tools/hd_generate.py).
+    Rueckgabe: (geschrieben, Fehler); leere Bilder werden nicht geschrieben."""
+    written = errors = 0
+    for p in prepare(game, report).values():
+        folder = os.path.basename(os.path.dirname(p.path)).lower()
+        for obj in p.objects:
+            path = os.path.join(out, folder, p.name, chunk_name(obj[0]) + ".png")
+            if not force and os.path.exists(path):
+                continue
+            try:
+                w, h, rgba = decode(p, obj)
+            except PolError as exc:
+                errors += 1
+                report(f"  FEHLER {p.name}: {exc}")
+                continue
+            if w > 0 and h > 0:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                write_png(path, w, h, rgba)
+                written += 1
+    return written, errors
+
+
 # ---------------------------------------------------------------- Hauptprogramm
 
 def main():
@@ -342,18 +382,9 @@ def main():
     args = ap.parse_args()
 
     game = os.path.abspath(os.path.expanduser(args.spiel))
-    pools = load_pools(game)
+    pools = prepare(game)
     if not pools:
         raise SystemExit(f"Keine .pol-Dateien gefunden in {game}")
-    csv = find_file(game, "clan.csv")
-    table = None
-    if csv:
-        try:
-            table = read_clan_table(csv)
-        except (PolError, struct.error, ValueError) as exc:
-            print(f"WARNUNG: {csv} unlesbar ({exc})")
-    for h in link_pools(pools, table, csv is not None):
-        print(h)
 
     some = next(iter(pools.values()))
     data_dir = os.path.dirname(os.path.dirname(some.path))

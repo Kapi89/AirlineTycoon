@@ -64,7 +64,7 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    - `4x-UltraSharp.pth` von [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091,
      CC BY-NC-SA 4.0, nur nicht-kommerziell): fuer Raeume, Oberflaeche, Hallen-Bausteine und Schriften
    - `RealESRGAN_x4plus.pth` aus dem [Release v0.1.0 von Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)
-     (BSD-3-Clause): fuer die Stadtfotos
+     (BSD-3-Clause): fuer die Stadtfotos und die Figuren in der Halle
 
    Findet der Generator ein Modell nicht, fragt er nach dem Pfad (oder `--ultrasharp DATEI`, `--x4plus DATEI`,
    `--modelle ORDNER`).
@@ -78,7 +78,8 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    Zwischendateien liegen in `hd_assets/` daneben (kann danach geloescht werden).
    - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
      Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
-   - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`
+   - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`,
+     `--nur figuren` (Personen in der Halle)
      (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
      sofort, ob alles klappt.
    - `--gpu` rechnet auf der Grafikkarte: CUDA (NVIDIA, Windows/Linux) oder MPS (Mac mit Apple-Chip), sonst auf der
