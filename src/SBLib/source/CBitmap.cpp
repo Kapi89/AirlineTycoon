@@ -134,6 +134,33 @@ static Uint64 HdHashSurface(SDL_Surface *surface) {
     return h;
 }
 
+// 1x-Kopie einer Spielgrafik samt Colorkey (H18). Ueber Sperre und Zeilenkopie statt SDL_ConvertSurface: Unter
+// sdl2-compat (SDL3, z. B. der Mac-Build mit Homebrew) dekodiert SDL_ConvertSurface eine RLE-Grafik intern, ohne die
+// SDL2-Sicht der Quelle nachzuziehen. Der naechste Aufruf auf der Quelle (etwa SDL_GetColorKey) schreibt dann einen
+// veralteten Pixelzeiger zurueck, und der folgende Blit in die Grafik stuerzt ab. Lock/Unlock gleichen beide Sichten ab.
+static SDL_Surface *HdCopySurface(SDL_Surface *src) {
+    if (src == nullptr) {
+        return nullptr;
+    }
+    Uint32 key = 0;
+    const bool hasKey = SDL_GetColorKey(src, &key) == 0;
+    if (SDL_LockSurface(src) < 0) {
+        return nullptr;
+    }
+    SDL_Surface *c = SDL_CreateRGBSurfaceWithFormat(0, src->w, src->h, src->format->BitsPerPixel, src->format->format);
+    if (c != nullptr) {
+        const size_t rowBytes = size_t(src->w) * src->format->BytesPerPixel;
+        for (SLONG y = 0; y < src->h; y++) {
+            memcpy(static_cast<Uint8 *>(c->pixels) + y * c->pitch, static_cast<const Uint8 *>(src->pixels) + y * src->pitch, rowBytes);
+        }
+        if (hasKey) {
+            SDL_SetColorKey(c, SDL_TRUE, key);
+        }
+    }
+    SDL_UnlockSurface(src);
+    return c;
+}
+
 void SB_CBitmapCore::RecordHd(SB_CBitmapCore *target, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey) {
     if (gHdPrimary == nullptr || target == nullptr) {
         return;
@@ -1102,11 +1129,7 @@ void SB_CPrimaryBitmap::KeepHdSource(SDL_Surface *src) {
                 continue;
             }
             if (!copy && !failed) {
-                SDL_Surface *c = SDL_ConvertSurface(src, src->format, 0);
-                Uint32 key = 0;
-                if (c != nullptr && SDL_GetColorKey(src, &key) == 0) {
-                    SDL_SetColorKey(c, SDL_TRUE, key);
-                }
+                SDL_Surface *c = HdCopySurface(src);
                 failed = c == nullptr;
                 if (c != nullptr) {
                     copy = std::shared_ptr<SDL_Surface>(c, SDL_FreeSurface);
@@ -1132,13 +1155,9 @@ void SB_CPrimaryBitmap::SeedHdList(SB_CBitmapCore *core) {
         return;
     }
     SDL_Surface *src = core->lpDDSurface;
-    SDL_Surface *c = SDL_ConvertSurface(src, src->format, 0);
+    SDL_Surface *c = HdCopySurface(src);
     if (c == nullptr) {
         return;
-    }
-    Uint32 key = 0;
-    if (SDL_GetColorKey(src, &key) == 0) {
-        SDL_SetColorKey(c, SDL_TRUE, key);
     }
     SB_HdEntry e;
     e.Keep = std::shared_ptr<SDL_Surface>(c, SDL_FreeSurface);
@@ -1283,7 +1302,7 @@ SB_CPrimaryBitmap::HdFlat *SB_CPrimaryBitmap::GetWhiteTextures(SDL_Surface *src,
     // die uebrigen Eintraege der Quelle in 1x auf eine Kopie nachspielen
     SDL_Surface *under = nullptr;
     if (sub != nullptr && std::any_of(sub->begin(), sub->end(), [](const SB_HdEntry &e) { return e.Glyph; })) {
-        under = SDL_ConvertSurface(src, src->format, 0);
+        under = HdCopySurface(src);
         if (under != nullptr) {
             for (const SB_HdEntry &e : *sub) {
                 if (e.Glyph || e.Replay != nullptr || e.Src == nullptr) {
