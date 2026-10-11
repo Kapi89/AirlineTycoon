@@ -40,13 +40,16 @@ Lizenz in einem Satz: Spiel selbst kaufen, das erzeugte Paket nur privat nutzen 
    dann die erste passende Regel (Muster wie `gli/*1.gli/*`), sonst `auto`. Schriften stehen unter `schriften`;
    eine Schrift ohne Eintrag bekommt `schrift_standard` (Hinweis im Lauf).
 3. **Hochrechnen** (4x) mit den Verfahren aus `tools/hdgen/hd_methods.py`. Das ist die Referenz-Implementierung, mit
-   der das abgenommene Paket erzeugt wurde, nur um die Wahl CPU/CUDA ergaenzt.
-4. **Ablegen** als `hd/<ordner>/<datei>/<CHUNK>.png` bzw. `hd/<ordner>/<schrift>.mcf.png` neben der `AT.exe`
-   (gesucht im Spielordner und eine Ebene tiefer; sonst der Spielordner, oder `--ausgabe`).
+   der das abgenommene Paket erzeugt wurde, ergaenzt um die Wahl CPU/CUDA/MPS und die Korrekturen aus H18b.
+4. **Ablegen** als `hd/<ordner>/<datei>/<CHUNK>.png` bzw. `hd/<ordner>/<schrift>.mcf.png` im Datenordner (dem Ordner
+   mit `gli/`, dort gehoert auch die `AT.exe` hin), oder in `--ausgabe`.
 
 Gleiche Eingaben werden nur einmal gerechnet: Schluessel ist die MD5 der Eingabe-PNG plus Verfahren, Modell und
 Schrift-Parameter, gemerkt in `hd_assets/hd_cache.jsonl`. Vorhandene Ausgaben werden uebersprungen; jede PNG wird
 erst unter einem Zwischennamen geschrieben und dann umbenannt, ein Abbruch hinterlaesst also keine halben Dateien.
+Ausgaben, die der Generator selbst mit einem anderen Schluessel erzeugt hat (geaendertes Verfahren, z. B. nach H18b die
+Stadtfotos und cond_bl/norm_bl/small_bl), rechnet er beim naechsten Lauf neu. Von Hand abgelegte PNGs ohne Eintrag im
+Cache bleiben unangetastet.
 
 ### Verfahren
 
@@ -55,9 +58,10 @@ erst unter einem Zwischennamen geschrieben und dann umbenannt, ein Abbruch hinte
 | `deckend_rgb` | Raum-Hintergruende | Modell auf das ganze Bild, RGB |
 | `deckend_rgba` | deckend gezeichnete Sprites | Modell, Alpha 255 |
 | `colorkey_rgba` | Sprites mit Colorkey, UI, Kiosk, Hallen-Bausteine | Schwarz = durchsichtig; Loecher aus Nachbarn auffuellen, Modell; Alpha = Lanczos-Maske, geschaerft |
-| `foto_rgb` | Stadtfotos `gli/*1.gli`, `gli/*1.glj` | Modell `x4plus`, RGB, reines Schwarz -> (1,1,1) |
+| `foto_rgb` | Stadtfotos `gli/*1.gli`, `gli/*1.glj` | Modell `x4plus` am Stueck (ohne Kacheln), RGB, reines Schwarz -> (1,1,1) |
 | `auto` | alles ohne Eintrag | `colorkey_rgba`, wenn das Bild reines Schwarz enthaelt, sonst `deckend_rgba` |
-| `schrift_standard` | norm_*, small_*, stat_*, status, cond_bl, dlgfont3 | Form per Modell auf der Binaermaske, Farbe per Modell (> 3 Farben) oder bikubisch |
+| `schrift_standard` | norm_*, small_* (ausser norm_bl, small_bl), stat_*, status, dlgfont3 | Form per Modell auf der Binaermaske, Farbe per Modell (> 3 Farben) oder bikubisch |
+| `schrift_standard_v1` | cond_bl, norm_bl, small_bl | wie `schrift_standard`, aber Farbe immer per Modell (Vorgaengerfassung) |
 | `schrift_projektion` | inkfont, dlgfont1, dlgfont2 | Tintenanteil per Projektion Tinte/Hintergrund, per Modell vergroessert |
 | `schrift_bikubisch` | bank_bl, bank_ro | wie Projektion, aber bikubisch (kein Modell) |
 
@@ -74,7 +78,7 @@ Bilder kleiner als 4 px werden pixelgenau vergroessert. Kategorien fuer `--nur`:
 Gesucht wird in `--modelle`, dann in `models/` im aktuellen Verzeichnis, im Repository, neben der `AT.exe` und im
 Spielordner. Fehlt ein Modell, fragt der Generator nach dem Pfad bzw. nennt Quelle und Lizenz und bricht ab; er
 laedt nichts herunter. Zu jedem Modell steht die SHA-256 im Lauf, damit sich Ergebnisse vergleichen lassen.
-Geladen wird mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px).
+Geladen wird mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px); die Stadtfotos am Stueck.
 
 ### Reproduzierbarkeit
 

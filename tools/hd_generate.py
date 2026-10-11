@@ -45,6 +45,9 @@ import gli_export  # noqa: E402
 import mcf_export  # noqa: E402
 
 MANIFEST = os.path.join(TOOLS, "hdgen", "manifest.json")
+# Stand je Verfahren: wird erhoeht, wenn sich das Ergebnis eines Verfahrens aendert. Ausgaben, die mit einem aelteren
+# Stand gerechnet wurden, erkennt der Cache und rechnet sie neu (H18b: Stadtfotos am Stueck statt in Kacheln).
+VERFAHREN_STAND = {"foto_rgb": 2}
 KATEGORIEN = ("schriften", "stadtfotos", "ui", "raeume", "bausteine")  # auch Reihenfolge der Bearbeitung
 
 MODELLE = {
@@ -296,7 +299,8 @@ class Auftrag:
         with open(self.quelle, "rb") as fh:
             md5 = hashlib.md5(fh.read()).hexdigest()
         extra = json.dumps([self.ink, self.bg, self.par], sort_keys=True) if self.kategorie == "schriften" else ""
-        return f"{md5}|{self.verfahren}|{self.modell}|{extra}"
+        stand = VERFAHREN_STAND.get(self.verfahren, 1)
+        return f"{md5}|{self.verfahren}|{self.modell}|{extra}" + (f"|v{stand}" if stand > 1 else "")
 
 
 def auftraege_sammeln(original, ziel, plan, kategorien):
@@ -336,6 +340,8 @@ def rechnen(a, hm, modelle):
         return hm.BILD_VERFAHREN[a.verfahren](model, im)
     if a.verfahren == "schrift_standard":
         return hm.m_schrift_standard(model, im)
+    if a.verfahren == "schrift_standard_v1":
+        return hm.m_schrift_standard_v1(model, im)
     if a.verfahren == "schrift_projektion":
         return hm.m_schrift_projektion(model, im, a.ink, a.bg)
     if a.verfahren == "schrift_bikubisch":
@@ -361,16 +367,23 @@ class Cache:
     """MD5-Cache: Schluessel -> bereits geschriebene Ausgabe (relativ zu hd/). Bleibt ueber Laeufe erhalten."""
 
     def __init__(self, path, ziel):
-        self.path, self.ziel, self.map = path, ziel, {}
+        self.path, self.ziel, self.map, self.zuletzt = path, ziel, {}, {}
         if os.path.exists(path):
             with open(path, encoding="utf-8") as fh:
                 for line in fh:
                     try:
                         k, rel = json.loads(line)
                         self.map[k] = rel
+                        self.zuletzt[rel] = k  # mit welchem Schluessel die Ausgabe zuletzt entstand
                     except ValueError:
                         pass  # abgebrochene letzte Zeile
         self.fh = open(path, "a", encoding="utf-8")
+
+    def veraltet(self, rel, k):
+        """Ausgabe mit anderem Schluessel entstanden (Verfahren, Modell oder Eingabe geaendert)? Ausgaben ohne Eintrag
+        (z. B. von Hand abgelegt) gelten nicht als veraltet und bleiben unangetastet."""
+        alt = self.zuletzt.get(rel)
+        return alt is not None and alt != k
 
     def get(self, k):
         rel = self.map.get(k)
@@ -381,6 +394,7 @@ class Cache:
 
     def put(self, k, rel):
         self.map[k] = rel
+        self.zuletzt[rel] = k
         self.fh.write(json.dumps([k, rel]) + "\n")
         self.fh.flush()
 
@@ -467,8 +481,13 @@ def main():
         zaehler[(a.kategorie, a.verfahren)] = zaehler.get((a.kategorie, a.verfahren), 0) + 1
     for (kat, verf), n in sorted(zaehler.items(), key=lambda x: (KATEGORIEN.index(x[0][0]), x[0][1])):
         print(f"  {kat:<11} {verf:<19} {n:6d}")
-    offen = [a for a in auftraege if not os.path.exists(a.ziel)]
-    print(f"{len(auftraege)} Bilder, davon {len(auftraege) - len(offen)} schon vorhanden, {len(offen)} offen.")
+    os.makedirs(arbeit, exist_ok=True)
+    cache = Cache(os.path.join(arbeit, "hd_cache.jsonl"), ziel)
+    fehlend = [a for a in auftraege if not os.path.exists(a.ziel)]
+    veraltet = [a for a in auftraege if os.path.exists(a.ziel) and cache.veraltet(a.rel, a.schluessel())]
+    offen = sorted(fehlend + veraltet, key=lambda a: (KATEGORIEN.index(a.kategorie), a.rel))
+    print(f"{len(auftraege)} Bilder, davon {len(auftraege) - len(offen)} schon vorhanden, {len(offen)} offen"
+          + (f" ({len(veraltet)} mit geaendertem Verfahren neu)" if veraltet else "") + ".")
     if args.liste or not offen:
         return 1 if fehler else 0
 
@@ -509,8 +528,6 @@ def main():
             print(f"Rechne auf der CPU mit {args.threads} Threads. Das ganze Paket dauert so viele Stunden; "
                   "Abbruch mit Strg+C, ein neuer Start setzt fort.")
 
-    os.makedirs(arbeit, exist_ok=True)
-    cache = Cache(os.path.join(arbeit, "hd_cache.jsonl"), ziel)
     start = time.time()
     gerechnet = kopiert = 0
     rechenzeit = 0.0
@@ -518,8 +535,9 @@ def main():
         for i, a in enumerate(offen, 1):
             k = a.schluessel()
             vorhanden = cache.get(k)
-            if vorhanden:
+            if vorhanden and vorhanden != a.ziel:
                 kopieren(vorhanden, a.ziel)
+                cache.put(k, a.rel)
                 kopiert += 1
             else:
                 t0 = time.time()
