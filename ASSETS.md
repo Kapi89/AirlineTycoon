@@ -122,6 +122,10 @@ python3 tools/pol_export.py /pfad/zum/spiel                 # PNGs nach hd_asset
 ```
 
 - RGBA; durchsichtig ist, was in keiner Pixelreihe vorkommt (Schwarz bleibt deckend).
+- `data/clan.csv` ist im Original xtRLE-kodiert; der Exporter entpackt sie wie die Engine (`LoadCompleteFile`).
+  Fehlt die Tabelle, ist sie leer oder unlesbar, werden die Eltern-Pools aus den Verweisen der Pools erschlossen
+  (mit Hinweis bzw. WARNUNG). Passen Tabelle und Verweise bei einem Clan nicht zusammen, meldet der Exporter das als
+  WARNUNG mit den betroffenen Pools und nimmt fuer diesen Clan die erschlossene Zuordnung.
 - Die Ausgabe muss in einem Ordner `hd_assets/` liegen (Standard: `hd_assets/original` neben den Spieldaten, derselbe
   Exportordner wie beim HD-Generator). Exportierte PNGs und `.pol`-Dateien duerfen nie ins Git (Asset-Guard).
 - Der HD-Generator laesst diese PNGs bis H21b aus (Hinweis im Lauf).

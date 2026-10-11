@@ -181,54 +181,140 @@ def find_file(root, name):
     return None
 
 
+def read_text_file(path):
+    """Datei wie LoadCompleteFile (TeakFile.cpp): xtRLE-kodierte Dateien werden entpackt, andere roh gelesen.
+
+    xtRLE: "xtRLE\\0", int32 Version, ab 0x101 int32 Laenge, danach Bloecke. Bit 7 gesetzt: n Literal-Bytes
+    (n = Bits 0-6), ab Version 0x102 mit 0xA5 XOR-verknuepft; sonst wird das folgende Byte n-mal wiederholt."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:6] != b"xtRLE\0":
+        return data
+    if len(data) < 10:
+        raise PolError("xtRLE-Kopf abgeschnitten")
+    pos = 6
+    version = struct.unpack_from("<i", data, pos)[0]
+    pos += 4
+    key = 0xA5 if version >= 0x102 else 0
+    size = None
+    if version >= 0x101:
+        size = struct.unpack_from("<i", data, pos)[0]
+        pos += 4
+    out = bytearray()
+    while pos < len(data) and (size is None or len(out) < size):
+        b = data[pos]
+        pos += 1
+        n = b & 0x7F
+        if b & 0x80:
+            out += bytes(x ^ key for x in data[pos:pos + n])
+            pos += n
+        elif pos < len(data):
+            out += bytes([data[pos]]) * n
+            pos += 1
+    if size is not None and len(out) < size:
+        raise PolError(f"xtRLE abgeschnitten ({len(out)} von {size} Byte)")
+    return bytes(out if size is None else out[:size])
+
+
 def read_clan_table(path):
     """Clan-Index -> (Typ, Palettendatei), wie CLANS::ReInit (Album: erste Zeile -> Index 89, dann absteigend)."""
     sep = re.compile("[;\x08]+")
-    with open(path, "rb") as fh:
-        lines = [l.decode("latin-1").rstrip("\r\n\x1a") for l in fh.read().split(b"\n")]
+    lines = [l.decode("latin-1").rstrip("\r\n\x1a") for l in read_text_file(path).split(b"\n")]
     lines = [l for l in lines[1:] if l.strip()]
     clans = {}
     for k in range(len(lines) // 3):
         tok = [t for t in sep.split(lines[3 * k]) if t]
-        if len(tok) < 13:
-            raise PolError(f"clan.csv: Zeile {3 * k + 2} hat zu wenige Spalten")
+        if len(tok) < 13 or not tok[0].strip().lstrip("-").isdigit():
+            raise PolError(f"Zeile {3 * k + 2} unlesbar")
         clans[MAX_CLANS - 1 - k] = (int(tok[0]), tok[12])
     return clans
 
 
-def link_pools(pools, table):
-    """Eltern-Pools setzen wie in Takeoff.cpp. table: Ergebnis von read_clan_table oder None (dann aus den
-    Verweisen erschlossen). Liefert Hinweise."""
+def pool_problems(p):
+    """Verweise, die sich mit den gesetzten Eltern-Pools nicht aufloesen lassen (leer = alles in Ordnung)."""
+    probs = set()
+    for gid, _, _, genes, _ in p.objects:
+        for _, anz, raw in genes:
+            if anz <= 4:
+                continue
+            v = struct.unpack("<I", raw)[0]
+            if v <= p.pool_size:
+                end = v + anz <= len(p.pixels)
+            elif BASE1 <= v < BASE2:
+                end = p.base1 is not None and v - BASE1 + anz <= len(p.base1.pixels)
+            else:
+                end = p.base2 is not None and v - BASE2 + anz <= len(p.base2.pixels)
+            if not end:
+                probs.add("Eltern-Pool 1" if BASE1 <= v < BASE2 else "Eltern-Pool 2" if v >= BASE2 else "eigener Pool")
+    return sorted(probs)
+
+
+def link_pools(pools, table, csv_found=True):
+    """Eltern-Pools setzen wie in Takeoff.cpp. table: Ergebnis von read_clan_table oder None. Ohne Tabelle (oder
+    wo Tabelle und Verweise sich widersprechen) wird die Zuordnung aus den Verweisen erschlossen. Liefert die
+    auszugebenden Meldungen (mit Vorsatz "Hinweis:" oder "WARNUNG:")."""
     hints = []
     by = {}
     for p in pools.values():
         m = POOL_RE.match(p.name)
         if m and m.group(1):
             by[(m.group(1).lower(), int(m.group(2)))] = p
-    for (kind, c), p in by.items():
+    clans = sorted({c for _, c in by})
+
+    def shared_table(c):
+        return c < MAX_CLANS - 1 and c in table and c + 1 in table and table[c][1] == table[c + 1][1] and table[c][0] != 30
+
+    def shared_inferred(c):
+        # geteilt, wenn der Clan-Pool selbst auf einen Eltern-Pool verweist oder ein Gimmick-Pool zwei Eltern-Pools nutzt
+        if ("clan", c + 1) not in by:
+            return False
+        cb1 = by[("clan", c)].uses_base()[0] if ("clan", c) in by else False
+        gb2 = by[("clang", c)].uses_base()[1] if ("clang", c) in by else False
+        wb2 = by[("clanw", c)].uses_base()[1] if ("clanw", c) in by else False
+        return cb1 or gb2 or wb2
+
+    def apply(c, shared):
         clan_c, clan_next = by.get(("clan", c)), by.get(("clan", c + 1))
-        if table is not None:
-            shared = (c < MAX_CLANS - 1 and c in table and c + 1 in table and table[c][1] == table[c + 1][1]
-                      and table[c][0] != 30)
+        for kind in ("clan", "clang", "clanw"):
+            p = by.get((kind, c))
+            if p is None:
+                continue
+            p.base1 = p.base2 = None
+            if kind == "clan":
+                p.base1 = clan_next if shared else None
+            elif shared:
+                p.base1, p.base2 = clan_next, clan_c
+            else:
+                p.base1 = clan_c
+                p.base2 = by.get(("clang", c)) if kind == "clanw" else None
+
+    def problems(c):
+        return [f"{by[(k, c)].name} ({', '.join(pool_problems(by[(k, c)]))})"
+                for k in ("clan", "clang", "clanw") if (k, c) in by and pool_problems(by[(k, c)])]
+
+    use_table = table is not None and len(table) > 0
+    if not use_table and by:
+        if csv_found:
+            hints.append("WARNUNG: data/clan.csv ist leer oder unlesbar, Eltern-Pools werden aus den Verweisen erschlossen")
         else:
-            # Ohne Tabelle: geteilt, wenn der Clan-Pool selbst auf einen Eltern-Pool verweist oder ein
-            # Gimmick-Pool zwei Eltern-Pools nutzt
-            cb1, _ = clan_c.uses_base() if clan_c else (False, False)
-            _, gb2 = by[("clang", c)].uses_base() if ("clang", c) in by else (False, False)
-            _, wb2 = by[("clanw", c)].uses_base() if ("clanw", c) in by else (False, False)
-            shared = clan_next is not None and (cb1 or gb2 or wb2)
-        if kind == "clan":
-            p.base1 = clan_next if shared else None
-        elif shared:
-            p.base1, p.base2 = clan_next, clan_c
-        else:
-            p.base1 = clan_c
-            p.base2 = by.get(("clang", c)) if kind == "clanw" else None
-        b1, b2 = p.uses_base()
-        if (b1 and p.base1 is None) or (b2 and p.base2 is None):
-            hints.append(f"{p.name}: verweist auf einen Eltern-Pool, der fehlt")
-    if table is None and by:
-        hints.append("data/clan.csv nicht gefunden: Eltern-Pools aus den Verweisen erschlossen")
+            hints.append("Hinweis: data/clan.csv nicht gefunden, Eltern-Pools werden aus den Verweisen erschlossen")
+    widerspruch = []
+    for c in clans:
+        apply(c, shared_table(c) if use_table else shared_inferred(c))
+    for c in clans:
+        probs = problems(c)
+        if probs and use_table:
+            # Tabelle passt nicht zu den Verweisen: Zuordnung aus den Verweisen versuchen
+            apply(c, shared_inferred(c))
+            rest = problems(c)
+            widerspruch.append(f"Clan {c}: laut clan.csv {'geteilt' if shared_table(c) else 'nicht geteilt'}, aber "
+                               + "; ".join(probs) + (" -> aus den Verweisen erschlossen, jetzt in Ordnung" if not rest
+                                                     else " -> auch erschlossen nicht aufloesbar: " + "; ".join(rest)))
+        elif probs:
+            widerspruch.append(f"Clan {c}: Verweise nicht aufloesbar: " + "; ".join(probs))
+    if widerspruch:
+        hints.append("WARNUNG: Eltern-Pools passen nicht zu den Verweisen in " + str(len(widerspruch)) + " Clan(s):\n  "
+                     + "\n  ".join(widerspruch))
     return hints
 
 
@@ -260,9 +346,14 @@ def main():
     if not pools:
         raise SystemExit(f"Keine .pol-Dateien gefunden in {game}")
     csv = find_file(game, "clan.csv")
-    table = read_clan_table(csv) if csv else None
-    for h in link_pools(pools, table):
-        print("Hinweis:", h)
+    table = None
+    if csv:
+        try:
+            table = read_clan_table(csv)
+        except (PolError, struct.error, ValueError) as exc:
+            print(f"WARNUNG: {csv} unlesbar ({exc})")
+    for h in link_pools(pools, table, csv is not None):
+        print(h)
 
     some = next(iter(pools.values()))
     data_dir = os.path.dirname(os.path.dirname(some.path))
