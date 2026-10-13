@@ -10,11 +10,12 @@ Der Datenordner (mit gli/) wird im angegebenen Ordner gesucht, auch tief in eine
 Spiel auch hd/, dorthin gehoert also auch die neue AT.exe bzw. AT. --gpu nutzt CUDA (NVIDIA) oder MPS (Apple-Chip).
 
 Ablauf:
-  1. Export: Grafiken (.gli/.glj) und Schriften (.mcf) der Spielkopie als PNG (tools/gli_export.py,
-     tools/mcf_export.py) nach ARBEIT/original.
+  1. Export: Grafiken (.gli/.glj), Schriften (.mcf) und Figuren der Halle (.pol) der Spielkopie als PNG
+     (tools/gli_export.py, tools/mcf_export.py, tools/pol_export.py) nach ARBEIT/original.
   2. Verfahren je Bild aus tools/hdgen/manifest.json: zuerst Eintrag, dann Regel, sonst "auto".
   3. Hochrechnen (4x) mit den Verfahren aus tools/hdgen/hd_methods.py.
-  4. Ablegen als hd/<ordner>/<datei>/<CHUNK>.png bzw. hd/<ordner>/<schrift>.mcf.png neben der AT.exe.
+  4. Ablegen als hd/<ordner>/<datei>/<CHUNK>.png bzw. hd/<ordner>/<schrift>.mcf.png neben der AT.exe
+     (Figuren: hd/gli/<pool>.pol/<ID>.png).
 
 Gleiche Eingaben (MD5 der PNG plus Verfahren und Modell) werden nur einmal gerechnet; vorhandene
 Ausgaben werden uebersprungen. Ein abgebrochener Lauf (Strg+C) wird beim naechsten Start fortgesetzt.
@@ -43,12 +44,13 @@ sys.path.insert(0, os.path.join(TOOLS, "hdgen"))
 
 import gli_export  # noqa: E402
 import mcf_export  # noqa: E402
+import pol_export  # noqa: E402
 
 MANIFEST = os.path.join(TOOLS, "hdgen", "manifest.json")
 # Stand je Verfahren: wird erhoeht, wenn sich das Ergebnis eines Verfahrens aendert. Ausgaben, die mit einem aelteren
 # Stand gerechnet wurden, erkennt der Cache und rechnet sie neu (H18b: Stadtfotos am Stueck statt in Kacheln).
 VERFAHREN_STAND = {"foto_rgb": 2}
-KATEGORIEN = ("schriften", "stadtfotos", "ui", "raeume", "bausteine")  # auch Reihenfolge der Bearbeitung
+KATEGORIEN = ("schriften", "stadtfotos", "ui", "raeume", "bausteine", "figuren")  # auch Reihenfolge der Bearbeitung
 
 MODELLE = {
     "ultrasharp": {
@@ -63,7 +65,7 @@ MODELLE = {
         "name": "RealESRGAN_x4plus (xinntao/Real-ESRGAN, Release v0.1.0)",
         "quelle": "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0",
         "lizenz": "BSD-3-Clause",
-        "wofuer": "Stadtfotos (Globus/Filofax, Laptop)",
+        "wofuer": "Stadtfotos (Globus/Filofax, Laptop) und Figuren der Halle",
     },
 }
 
@@ -73,7 +75,8 @@ MODELLE = {
 class Plan:
     """Bestimmt Verfahren, Modell und Kategorie je exportierter PNG."""
 
-    def __init__(self, path=MANIFEST):
+    def __init__(self, path=MANIFEST, bausteine_modellkante=False):
+        self.bausteine_modellkante = bausteine_modellkante
         with open(path, encoding="utf-8") as fh:
             m = json.load(fh)
         if m.get("scale", 4) != 4:
@@ -93,6 +96,8 @@ class Plan:
 
     @staticmethod
     def kategorie(schluessel, verfahren):
+        if ".pol/" in schluessel:
+            return "figuren"
         if verfahren == "foto_rgb":
             return "stadtfotos"
         if schluessel.startswith("gli/glbrick"):
@@ -113,8 +118,11 @@ class Plan:
             else:
                 verfahren = "auto"
         if modell is None:
-            modell = "x4plus" if verfahren == "foto_rgb" else "ultrasharp"
-        return verfahren, modell, self.kategorie(schluessel, verfahren)
+            modell = "x4plus" if verfahren in ("foto_rgb", "figur_rgba") else "ultrasharp"
+        kategorie = self.kategorie(schluessel, verfahren)
+        if self.bausteine_modellkante and kategorie == "bausteine" and verfahren == "colorkey_rgba":
+            verfahren = "colorkey_rgba_modellkante"  # H24: Kante per Modell statt Lanczos (--bausteine-modellkante)
+        return verfahren, modell, kategorie
 
     def schrift(self, name):
         """name: z. B. 'norm_bl' -> (verfahren, modell, ink, bg, parameter, bekannt)."""
@@ -249,7 +257,7 @@ def sha256(path):
 
 def exportieren(spiel, original, plan, kategorien):
     n_bilder = n_schriften = fehler = 0
-    if kategorien - {"schriften"}:
+    if kategorien - {"schriften", "figuren"}:
         archive = list(gli_export.find_archives([spiel], original))
         for i, path in enumerate(archive, 1):
             folder = os.path.basename(os.path.dirname(os.path.abspath(path))).lower()
@@ -279,7 +287,11 @@ def exportieren(spiel, original, plan, kategorien):
             os.makedirs(os.path.dirname(out), exist_ok=True)
             mcf_export.write_png(out, width, height * chars, rows)
             n_schriften += 1
-    print(f"Export: {n_bilder} Bilder und {n_schriften} Schriften neu exportiert"
+    n_figuren = 0
+    if "figuren" in kategorien:
+        n_figuren, f = pol_export.export(spiel, original)
+        fehler += f
+    print(f"Export: {n_bilder} Bilder, {n_schriften} Schriften und {n_figuren} Figuren neu exportiert"
           + (f", {fehler} Dateien mit Fehler" if fehler else "") + ".")
     return fehler
 
@@ -444,6 +456,9 @@ def main():
     ap.add_argument("--x4plus", help="Pfad zu RealESRGAN_x4plus.pth")
     ap.add_argument("--nicht-fragen", action="store_true", help="bei fehlendem Modell nicht nach dem Pfad fragen")
     ap.add_argument("--liste", action="store_true", help="nur exportieren und zaehlen, nichts rechnen")
+    ap.add_argument("--bausteine-modellkante", action="store_true",
+                    help="Hallen-Bausteine mit colorkey_rgba_modellkante (Kante per Modell statt Lanczos); "
+                         "vorhandene Bausteine werden dann neu gerechnet")
     ARGS = args = ap.parse_args()
 
     if args.nur:
@@ -472,7 +487,7 @@ def main():
     original = os.path.join(arbeit, "original")
 
     print(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {', '.join(k for k in KATEGORIEN if k in kategorien)}")
-    plan = Plan()
+    plan = Plan(bausteine_modellkante=args.bausteine_modellkante)
     fehler = exportieren(spiel, original, plan, kategorien)
     auftraege = auftraege_sammeln(original, ziel, plan, kategorien)
 
