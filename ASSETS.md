@@ -216,6 +216,15 @@ Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden hor
 (`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
 ist nicht noetig.
 
+### Denkblasen in der Halle (H22)
+
+Die Denkblasen ueber den Figuren (`OptionThinkBubbles`) sind die GLI-Chunks `MOOD00` bis `MOOD42` aus
+`gli/glstd.gli` (Verfahren `colorkey_rgba`, im normalen HD-Paket enthalten). Das Spiel laedt sie ohne Colorkey und
+blendet sie mit `ColorFX.BlitTrans` ein und aus; Pixel 0 bleiben dabei frei. Die HD-Ebene nimmt dafuer die HD-Textur
+mit der Maske der 1x-Fassung (wie bei H14). Blasen mit Airline-Logo (`SLOGO0`-`SLOGO3` hineingemalt) laufen ueber
+das Zwischenziel; mit einem Renderer ohne Zwischenziel (Software) bleiben nur diese 1x. Unter einer halb
+durchsichtigen Blase muss HD liegen (Bausteine der Halle), sonst zeigt das Overlay an dieser Stelle 1x.
+
 ### Diagnose (HD-Ebene)
 
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
