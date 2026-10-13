@@ -93,6 +93,22 @@ static void HdMissingSurface(const std::string &name, SDL_Surface *surface, cons
     }
 }
 
+SDL_Texture *SB_CreateHdSpriteTexture(SDL_Surface *hd) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTexture(hd) : nullptr;
+}
+
+void SB_RecordHdSprite(SB_CBitmapCore *target, const std::shared_ptr<SDL_Surface> &src1x, SDL_Texture *tex, SLONG x, SLONG y, SLONG texScale) {
+    if (gHdPrimary != nullptr && target != nullptr && src1x && tex != nullptr && SB_GetRenderScale() > 1) {
+        gHdPrimary->RecordHdTex(target, src1x.get(), tex, SDL_Rect{0, 0, src1x->w, src1x->h}, x, y, true, false, nullptr, false, src1x, texScale);
+    }
+}
+
+void SB_ForgetHdTexture(SDL_Texture *tex) {
+    if (gHdPrimary != nullptr) {
+        gHdPrimary->ForgetHdTexture(tex); // ohne Primaerpuffer gibt es auch den Renderer (und seine Texturen) nicht mehr
+    }
+}
+
 SDL_Texture *SB_GetHdTexture(SDL_Surface *hd, const SDL_Surface *orig1x, bool colorKey) {
     return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->GetHdTextureFor(hd, orig1x, colorKey) : nullptr;
 }
@@ -1091,6 +1107,27 @@ SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surfa
     return tex;
 }
 
+SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTexture(SDL_Surface *hd) {
+    if (!CanUseHd() || hd == nullptr) {
+        return nullptr;
+    }
+    SDL_Surface *argb = SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0);
+    if (argb == nullptr) {
+        return nullptr;
+    }
+    HdBleedColors(argb, 2); // Farbe in die durchsichtigen Raender ziehen (lineare Filterung)
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, argb);
+    SDL_FreeSurface(argb);
+    if (tex == nullptr) {
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", hd->w, hd->h, SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    HdAlphaTex.insert(tex);
+    return tex;
+}
+
 void SB_CPrimaryBitmap::ForgetHdSurface(const SDL_Surface *hd) {
     for (auto *cache : {&HdTexCache, &HdTexCacheOpaque, &HdTexCacheMask1x}) {
         auto it = cache->find(hd);
@@ -1563,7 +1600,7 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
 
 // Blit aus einer Textur: Sprite mit HD-Textur oder Zeichen aus einem HD-Glyphenblatt (H7)
 void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
-                                    bool glyph, SB_CBitmapCore *core, bool flipX) {
+                                    bool glyph, SB_CBitmapCore *core, bool flipX, const std::shared_ptr<SDL_Surface> &keep, SLONG texScale) {
     SDL_Surface *ts = target->lpDDSurface;
     SDL_Rect sr, dr, area;
     if (ts == nullptr || src == nullptr || tex == nullptr || SB_GetRenderScale() <= 1 || !CanUseHd() || !HdBlitArea(src, ts, srcRect, x, y, sr, dr, area)) {
@@ -1579,7 +1616,7 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     SB_HdEntry e;
     e.Src = src;
     e.Tex = tex;
-    e.TexScale = SB_GetRenderScale();
+    e.TexScale = texScale > 0 ? texScale : SB_GetRenderScale();
     e.SrcRect = sr;
     e.Dst = dr;
     e.Clip = ts->clip_rect;
@@ -1588,6 +1625,7 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     e.Glyph = glyph;
     e.Core = core;
     e.FlipX = flipX;
+    e.Keep = keep;
     if (target != this && !glyph) {
         // Dieselbe Grafik an dieselbe Stelle (z. B. Logo in der Stimmungsblase, jedes Frame): der fruehere
         // gleiche Eintrag wird vom neuen vollstaendig ueberdeckt und faellt weg, die Liste waechst nicht
@@ -1905,6 +1943,14 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
             e.Tex = Get1xTexture(surface);
         } else if (src->HdTexture != nullptr && SDL_HasColorKey(surface) == SDL_TRUE) {
             e.Tex = src->HdTexture;
+            e.TexScale = SB_GetRenderScale();
+            e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
+        } else if (SDL_Texture *keyed = (src->HdTexture != nullptr && src->HdSurface != nullptr)
+                                            ? GetHdTextureFor(src->HdSurface, surface, true, true)
+                                            : nullptr) {
+            // H22: BlitTrans laesst Pixel 0 der Quelle auch ohne Colorkey frei (Denkblasen MoodBms, Gestank):
+            // HD-Textur mit der Maske der 1x-Fassung, wie beim Colorkey-Blit einer zusammengesetzten Bitmap (H14)
+            e.Tex = keyed;
             e.TexScale = SB_GetRenderScale();
             e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
         } else {

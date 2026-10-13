@@ -16,6 +16,10 @@ Verfahren (Namen wie in hd_manifest.json):
   colorkey_rgba    Sprites mit Colorkey (Schwarz = durchsichtig): Loecher auffuellen, Modell,
                    Alpha = weiche Lanczos-Maske des 1x-Colorkeys
   foto_rgb         Stadtfotos: Modell x4plus am Stueck (ohne Kacheln), RGB, reines Schwarz -> (1,1,1)
+  figur_rgba       Figuren der Halle (.pol-Export, H21b): Modell x4plus, Maske aus dem Alpha des Exports
+                   (Schwarz bleibt deckend), Kante per Modell auf der Binaermaske (wie schrift_standard)
+  colorkey_rgba_modellkante   wie colorkey_rgba (Schwarz = durchsichtig), aber Alpha wie figur_rgba per Modell auf
+                   der Binaermaske statt Lanczos (H24, wahlweise fuer die Hallen-Bausteine)
   schrift_standard / schrift_standard_v1 / schrift_projektion / schrift_bikubisch   Schriften (.mcf-Glyphenblaetter)
 """
 import hashlib, os, sys
@@ -118,13 +122,44 @@ def m_foto_rgb(model, im):
     return Image.fromarray(r, 'RGB')
 
 
+def model_alpha(model, mask, pad=4, gain=2.0):
+    """Weiche Alpha-Maske per Modell: Binaermaske (deckend = ~mask) mit Rand pad vergroessert, Kanalmittel,
+    geschaerft mit gain. Ergebnis float 0..1 in 4-facher Groesse."""
+    al = np.pad((~mask).astype(np.float32), pad)
+    ra = upscale(model, np.repeat(al[..., None], 3, 2)).mean(2)[4 * pad:-4 * pad, 4 * pad:-4 * pad]
+    return np.clip((ra - 0.5) * gain + 0.5, 0, 1)
+
+
+def _rgba_modellkante(model, rgb, mask, pad, gain):
+    r = up_or_nearest(model, fill_holes(rgb, mask))
+    alpha = model_alpha(model, mask, pad, gain)
+    return Image.fromarray(np.dstack([(r * 255).round(), (alpha * 255).round()]).astype(np.uint8), 'RGBA')
+
+
+def m_figur_rgba(model, im, pad=4, gain=2.0):
+    """Figuren der Halle (tools/pol_export.py, RGBA): durchsichtig ist, was im Export Alpha 0 hat; Schwarz ist eine
+    normale Farbe. Farbe: Loecher auffuellen, Modell (kachelweise). Alpha: Binaermaske mit Rand per Modell
+    vergroessert und geschaerft (gain 2.0). Modell: RealESRGAN_x4plus (BSD-3-Clause)."""
+    a = np.asarray(im.convert('RGBA'))
+    return _rgba_modellkante(model, a[..., :3].astype(np.float32) / 255, a[..., 3] == 0, pad, gain)
+
+
+def m_colorkey_rgba_modellkante(model, im, pad=4, gain=2.0):
+    """Wie colorkey_rgba (reines Schwarz = durchsichtig, Loecher auffuellen, Farbe per Modell), aber die Kante wie bei
+    figur_rgba per Modell auf der Binaermaske (gain 2.0) statt Lanczos: glatter, ohne Treppen (H24)."""
+    rgb = np.asarray(im.convert('RGB'))
+    return _rgba_modellkante(model, rgb.astype(np.float32) / 255, (rgb == 0).all(2), pad, gain)
+
+
 def m_auto(model, im):
     rgb = np.asarray(im.convert('RGB'))
     return m_colorkey_rgba(model, im) if (rgb == 0).all(2).any() else m_deckend_rgba(model, im)
 
 
 BILD_VERFAHREN = {'deckend_rgb': m_deckend_rgb, 'deckend_rgba': m_deckend_rgba,
-                  'colorkey_rgba': m_colorkey_rgba, 'foto_rgb': m_foto_rgb, 'auto': m_auto}
+                  'colorkey_rgba': m_colorkey_rgba, 'colorkey_rgba_modellkante': m_colorkey_rgba_modellkante,
+                  'foto_rgb': m_foto_rgb, 'figur_rgba': m_figur_rgba,
+                  'auto': m_auto}
 
 # ---------------------------------------------------------------- Schriften
 # .mcf-Glyphenblatt: 223 Zeichen gleicher Hoehe untereinander, RGBA.
