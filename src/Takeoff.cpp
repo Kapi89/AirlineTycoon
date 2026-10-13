@@ -20,6 +20,7 @@
 #include "global.h"
 #include "Globe.h"
 #include "helper.h"
+#include "HdVideoExport.h"
 #include "HLine.h"
 #include "Insel.h"
 #include "Intro.h"
@@ -924,6 +925,11 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
                 check(SkelettPool);
                 AT_Log_I("HD", "Pol-Pruefung gesamt: %d Bilder, %d gleich, %d fehlen, %d abweichend%s", total.Objects, total.Ok, total.Missing,
                          total.Different, (total.Missing == 0 && total.Different == 0) ? " -> Abweichung 0" : "");
+            }
+
+            // H25a: Bilder der animierten Personen in Raeumen exportieren (Zaehlung: tools/video_count.py)
+            if (Sim.Options.OptionHdVideoExport.GetLength() > 0) {
+                HdVideoExport(std::string((LPCTSTR)Sim.Options.OptionHdVideoExport));
             }
         }
 

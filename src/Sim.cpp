@@ -3991,6 +3991,11 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionHdPolCheck) || OptionHdPolCheck < 0 || OptionHdPolCheck > 1) {
             OptionHdPolCheck = 0;
         }
+        {
+            static char text[8192]; // ReadRegistryKeyEx schreibt so viel, wie in AT.json steht (lange Clip-Listen)
+            text[0] = 0;
+            OptionHdVideoExport = reg.ReadRegistryKeyEx(text, "OptionHdVideoExport") ? CString(text) : CString("");
+        }
         if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
             OptionHdOverlayFilter = 0;
         }
@@ -4283,6 +4288,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionWidescreen);
     reg.WriteRegistryKey_l(OptionWidescreenRoomBorder);
     reg.WriteRegistryKey_l(OptionHdPolCheck);
+    reg.WriteRegistryKeyEx(OptionHdVideoExport, "OptionHdVideoExport");
     reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_b(OptionHdDebugMask);
     reg.WriteRegistryKey_b(OptionHdMissingLog);
