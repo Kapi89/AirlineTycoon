@@ -3988,6 +3988,9 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionWidescreenRoomBorder) || OptionWidescreenRoomBorder < 0 || OptionWidescreenRoomBorder > 1) {
             OptionWidescreenRoomBorder = 1;
         }
+        if (!reg.ReadRegistryKey_l(OptionHdPolCheck) || OptionHdPolCheck < 0 || OptionHdPolCheck > 1) {
+            OptionHdPolCheck = 0;
+        }
         if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
             OptionHdOverlayFilter = 0;
         }
@@ -4279,6 +4282,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionRenderScale);
     reg.WriteRegistryKey_l(OptionWidescreen);
     reg.WriteRegistryKey_l(OptionWidescreenRoomBorder);
+    reg.WriteRegistryKey_l(OptionHdPolCheck);
     reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_b(OptionHdDebugMask);
     reg.WriteRegistryKey_b(OptionHdMissingLog);
