@@ -20,6 +20,7 @@
 #include "global.h"
 #include "Globe.h"
 #include "helper.h"
+#include "HdVideoExport.h"
 #include "HLine.h"
 #include "Insel.h"
 #include "Intro.h"
@@ -519,6 +520,12 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
     AutoLobbyApplyOptions();
     if (gQuickTestRun == 0 && !AutoLobbyActive()) {
         Sim.SaveOptions();
+    }
+
+    // H25a: Bilder der animierten Personen in Raeumen exportieren, gleich beim Programmstart (ohne Partie);
+    // Zaehlung danach mit tools/video_count.py
+    if (Sim.Options.OptionHdVideoExport.GetLength() > 0) {
+        HdVideoExport(std::string((LPCTSTR)Sim.Options.OptionHdVideoExport));
     }
 
     CreateVideo();

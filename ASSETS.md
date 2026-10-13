@@ -224,6 +224,26 @@ Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden hor
 (`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
 ist nicht noetig.
 
+### Animierte Personen in Raeumen: Export und Zaehlung (H25a)
+
+Verkaeufer, Berater, Boss usw. in den Raeumen sind Smacker-Videos (`video/*.smk`, `CSmackerPerson`), keine
+GLI-Grafiken, und bleiben deshalb vorerst 1x. Fuer die Planung (H25b/c) exportiert die Engine sie Bild fuer Bild mit
+demselben Decoder wie im Spiel:
+
+1. In `AT.json` `"OptionHdVideoExport": "alle"` setzen, fuer einen Probelauf nur Raeume oder Clips, z. B. `"duty"`
+   (Anfang des Raumnamens genuegt) oder `"dukau, durede"`. Raeume: arabair, aufsicht, bank, buero, designer,
+   dutyfree, fracht, kiosk, laptop, lastmin, makler, museum, nasa, personal, reise, ricks, sabotage, security,
+   tafel, weltall, werbung, werkstat.
+2. Spiel starten; der Export laeuft gleich beim Programmstart (vor dem Hauptmenue, ohne Partie), im Log steht
+   `OptionHdVideoExport aus AT.json: '...'` und je Clip eine Zeile. Die Engine schreibt `hd_assets/original/video/<clip>.smk/<bild>.png` (RGBA, Index 0 =
+   durchsichtig, reines Schwarz wie im Spiel (4,4,4)) und je Clip `frames.csv` (Raeume, Groesse, Bounding-Box der
+   deckenden Pixel je Bild). Fehlende Clips stehen im Log. Danach die Option wieder auf `""` setzen.
+3. Zaehlen: `python3 tools/video_count.py <spiel>/hd_assets/original/video` (`--clips` fuer eine Zeile je Clip). Je
+   Raum: Clips, Bilder, verschiedene Bilder (MD5), geschaetzter Grafikspeicher bei 2x und 4x, zugeschnitten auf die
+   Bounding-Box des Clips (in Klammern ohne Zuschnitt), dazu die insgesamt hochzurechnende Flaeche.
+
+Wie alle Exporte gehoert nichts davon ins Git (`hd_assets/` ist gitignored, Asset-Guard).
+
 ### Denkblasen in der Halle (H22)
 
 Die Denkblasen ueber den Figuren (`OptionThinkBubbles`) sind die GLI-Chunks `MOOD00` bis `MOOD42` aus
