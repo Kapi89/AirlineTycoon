@@ -75,7 +75,8 @@ MODELLE = {
 class Plan:
     """Bestimmt Verfahren, Modell und Kategorie je exportierter PNG."""
 
-    def __init__(self, path=MANIFEST):
+    def __init__(self, path=MANIFEST, bausteine_modellkante=False):
+        self.bausteine_modellkante = bausteine_modellkante
         with open(path, encoding="utf-8") as fh:
             m = json.load(fh)
         if m.get("scale", 4) != 4:
@@ -118,7 +119,10 @@ class Plan:
                 verfahren = "auto"
         if modell is None:
             modell = "x4plus" if verfahren in ("foto_rgb", "figur_rgba") else "ultrasharp"
-        return verfahren, modell, self.kategorie(schluessel, verfahren)
+        kategorie = self.kategorie(schluessel, verfahren)
+        if self.bausteine_modellkante and kategorie == "bausteine" and verfahren == "colorkey_rgba":
+            verfahren = "colorkey_rgba_modellkante"  # H24: Kante per Modell statt Lanczos (--bausteine-modellkante)
+        return verfahren, modell, kategorie
 
     def schrift(self, name):
         """name: z. B. 'norm_bl' -> (verfahren, modell, ink, bg, parameter, bekannt)."""
@@ -452,6 +456,9 @@ def main():
     ap.add_argument("--x4plus", help="Pfad zu RealESRGAN_x4plus.pth")
     ap.add_argument("--nicht-fragen", action="store_true", help="bei fehlendem Modell nicht nach dem Pfad fragen")
     ap.add_argument("--liste", action="store_true", help="nur exportieren und zaehlen, nichts rechnen")
+    ap.add_argument("--bausteine-modellkante", action="store_true",
+                    help="Hallen-Bausteine mit colorkey_rgba_modellkante (Kante per Modell statt Lanczos); "
+                         "vorhandene Bausteine werden dann neu gerechnet")
     ARGS = args = ap.parse_args()
 
     if args.nur:
@@ -480,7 +487,7 @@ def main():
     original = os.path.join(arbeit, "original")
 
     print(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {', '.join(k for k in KATEGORIEN if k in kategorien)}")
-    plan = Plan()
+    plan = Plan(bausteine_modellkante=args.bausteine_modellkante)
     fehler = exportieren(spiel, original, plan, kategorien)
     auftraege = auftraege_sammeln(original, ziel, plan, kategorien)
 

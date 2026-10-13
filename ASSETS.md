@@ -58,6 +58,7 @@ Cache bleiben unangetastet.
 | `deckend_rgb` | Raum-Hintergruende | Modell auf das ganze Bild, RGB |
 | `deckend_rgba` | deckend gezeichnete Sprites | Modell, Alpha 255 |
 | `colorkey_rgba` | Sprites mit Colorkey, UI, Kiosk, Hallen-Bausteine | Schwarz = durchsichtig; Loecher aus Nachbarn auffuellen, Modell; Alpha = Lanczos-Maske, geschaerft |
+| `colorkey_rgba_modellkante` | Hallen-Bausteine mit `--bausteine-modellkante` (H24) | wie `colorkey_rgba`, aber Alpha wie `figur_rgba`: Binaermaske mit 4 px Rand per Modell vergroessert, geschaerft (gain 2.0); glattere Raender statt Lanczos-Treppen |
 | `foto_rgb` | Stadtfotos `gli/*1.gli`, `gli/*1.glj` | Modell `x4plus` am Stueck (ohne Kacheln), RGB, reines Schwarz -> (1,1,1) |
 | `figur_rgba` | Figuren der Halle `gli/*.pol/*` (H21b) | Modell `x4plus`; Maske aus dem Alpha des Exports (Schwarz bleibt deckend), Loecher auffuellen, Farbe per Modell; Alpha = Binaermaske mit 4 px Rand per Modell vergroessert, geschaerft (gain 2.0) |
 | `auto` | alles ohne Eintrag | `colorkey_rgba`, wenn das Bild reines Schwarz enthaelt, sonst `deckend_rgba` |
@@ -69,6 +70,11 @@ Cache bleiben unangetastet.
 Bilder kleiner als 4 px werden pixelgenau vergroessert. Kategorien fuer `--nur`: `schriften` (alle `.mcf`),
 `stadtfotos` (Verfahren `foto_rgb`), `bausteine` (`gli/glbrick*`), `raeume` (alles unter `room/`), `figuren` (`.pol`,
 Ausgabe `hd/gli/<pool>.pol/<ID>.png`), `ui` (der Rest).
+
+`--bausteine-modellkante` (H24): Die Hallen-Bausteine (Pflanzen usw.) bekommen `colorkey_rgba_modellkante` statt
+`colorkey_rgba`. Die Farbe bleibt gleich, nur die Kante wird per Modell gerechnet. Vorhandene Bausteine erkennt der
+Cache als veraltet und rechnet sie neu (z. B. `--nur bausteine --bausteine-modellkante`); ohne die Option wieder
+zurueck. Die Engine braucht dafuer nichts Neues.
 
 ### Modelle
 

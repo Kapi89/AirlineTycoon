@@ -79,7 +79,8 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
      Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
    - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`,
-     `--nur figuren` (Personen in der Halle)
+     `--nur figuren` (Personen in der Halle). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
+     Raendern (Kante per Modell, siehe ASSETS.md)
      (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
      sofort, ob alles klappt.
    - `--gpu` rechnet auf der Grafikkarte: CUDA (NVIDIA, Windows/Linux) oder MPS (Mac mit Apple-Chip), sonst auf der
