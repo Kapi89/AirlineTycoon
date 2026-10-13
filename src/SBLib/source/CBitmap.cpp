@@ -1945,6 +1945,14 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
             e.Tex = src->HdTexture;
             e.TexScale = SB_GetRenderScale();
             e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
+        } else if (SDL_Texture *keyed = (src->HdTexture != nullptr && src->HdSurface != nullptr)
+                                            ? GetHdTextureFor(src->HdSurface, surface, true, true)
+                                            : nullptr) {
+            // H22: BlitTrans laesst Pixel 0 der Quelle auch ohne Colorkey frei (Denkblasen MoodBms, Gestank):
+            // HD-Textur mit der Maske der 1x-Fassung, wie beim Colorkey-Blit einer zusammengesetzten Bitmap (H14)
+            e.Tex = keyed;
+            e.TexScale = SB_GetRenderScale();
+            e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
         } else {
             e.Tex = Get1xTexture(surface);
         }
