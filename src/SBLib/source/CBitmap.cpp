@@ -97,9 +97,9 @@ SDL_Texture *SB_CreateHdSpriteTexture(SDL_Surface *hd) {
     return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTexture(hd) : nullptr;
 }
 
-void SB_RecordHdSprite(SB_CBitmapCore *target, const std::shared_ptr<SDL_Surface> &src1x, SDL_Texture *tex, SLONG x, SLONG y) {
+void SB_RecordHdSprite(SB_CBitmapCore *target, const std::shared_ptr<SDL_Surface> &src1x, SDL_Texture *tex, SLONG x, SLONG y, SLONG texScale) {
     if (gHdPrimary != nullptr && target != nullptr && src1x && tex != nullptr && SB_GetRenderScale() > 1) {
-        gHdPrimary->RecordHdTex(target, src1x.get(), tex, SDL_Rect{0, 0, src1x->w, src1x->h}, x, y, true, false, nullptr, false, src1x);
+        gHdPrimary->RecordHdTex(target, src1x.get(), tex, SDL_Rect{0, 0, src1x->w, src1x->h}, x, y, true, false, nullptr, false, src1x, texScale);
     }
 }
 
@@ -1600,7 +1600,7 @@ void SB_CPrimaryBitmap::RecordHdBlit(SB_CBitmapCore *src, SB_CBitmapCore *target
 
 // Blit aus einer Textur: Sprite mit HD-Textur oder Zeichen aus einem HD-Glyphenblatt (H7)
 void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SDL_Texture *tex, const SDL_Rect &srcRect, SLONG x, SLONG y, bool colorKey,
-                                    bool glyph, SB_CBitmapCore *core, bool flipX, const std::shared_ptr<SDL_Surface> &keep) {
+                                    bool glyph, SB_CBitmapCore *core, bool flipX, const std::shared_ptr<SDL_Surface> &keep, SLONG texScale) {
     SDL_Surface *ts = target->lpDDSurface;
     SDL_Rect sr, dr, area;
     if (ts == nullptr || src == nullptr || tex == nullptr || SB_GetRenderScale() <= 1 || !CanUseHd() || !HdBlitArea(src, ts, srcRect, x, y, sr, dr, area)) {
@@ -1616,7 +1616,7 @@ void SB_CPrimaryBitmap::RecordHdTex(SB_CBitmapCore *target, SDL_Surface *src, SD
     SB_HdEntry e;
     e.Src = src;
     e.Tex = tex;
-    e.TexScale = SB_GetRenderScale();
+    e.TexScale = texScale > 0 ? texScale : SB_GetRenderScale();
     e.SrcRect = sr;
     e.Dst = dr;
     e.Clip = ts->clip_rect;

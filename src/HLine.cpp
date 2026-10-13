@@ -256,6 +256,19 @@ void CHLObj::BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target) {
     Min = max(0, ClipRect.top - Target.y);
     Max = min(HLineEntries.AnzEntries(), (ClipRect.bottom - Target.y) / 2);
 
+    // H23: HD-Fassung (2-fach) in die HD-Liste des Ziels (Hallenblick der Raeume). Die Referenz ist die 1x-Figur, Pixel
+    // fuer Pixel verdoppelt; wo BlitLargeAt beim Beschneiden oben/links anders zeichnet, zeigt das Overlay dort 1x.
+    if (HdHall && SB_GetRenderScale() > 1 && SB_GetRenderScale() % 2 == 0) {
+        if (auto *hd = pHLPool->GetHdFigure(*this)) {
+            if (!hd->Src2x) {
+                hd->Src2x = Double1x(hd->Src1x.get());
+            }
+            if (hd->Src2x) {
+                SB_RecordHdSprite(pBitmap, hd->Src2x, hd->Tex.get(), Target.x, Target.y, SB_GetRenderScale() / 2);
+            }
+        }
+    }
+
     ClipRect.left -= Target.x;
     ClipRect.right -= Target.x;
 
@@ -1304,6 +1317,29 @@ std::shared_ptr<SDL_Surface> CHLObj::Render1x() {
     return std::shared_ptr<SDL_Surface>(s, SDL_FreeSurface);
 }
 
+// H23: 1x-Fassung Pixel fuer Pixel verdoppelt (wie BlitLargeAt), gleicher Colorkey
+std::shared_ptr<SDL_Surface> CHLObj::Double1x(SDL_Surface *src) {
+    Uint32 key = 0;
+    if (src == nullptr || SDL_GetColorKey(src, &key) != 0) {
+        return nullptr;
+    }
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, src->w * 2, src->h * 2, 16, SDL_PIXELFORMAT_RGB565);
+    if (s == nullptr) {
+        return nullptr;
+    }
+    SDL_LockSurface(s);
+    for (SLONG y = 0; y < s->h; y++) {
+        const auto *in = reinterpret_cast<const UWORD *>(static_cast<const UBYTE *>(src->pixels) + (y / 2) * src->pitch);
+        auto *row = reinterpret_cast<UWORD *>(static_cast<UBYTE *>(s->pixels) + y * s->pitch);
+        for (SLONG x = 0; x < s->w; x++) {
+            row[x] = in[x / 2];
+        }
+    }
+    SDL_UnlockSurface(s);
+    SDL_SetColorKey(s, SDL_TRUE, key);
+    return std::shared_ptr<SDL_Surface>(s, SDL_FreeSurface);
+}
+
 // Gleiche sichtbare Pixel (bei verschiedenem Colorkey)?
 static bool SameFigure(SDL_Surface *a, SDL_Surface *b) {
     Uint32 ka = 0;
@@ -1324,7 +1360,7 @@ static bool SameFigure(SDL_Surface *a, SDL_Surface *b) {
     return true;
 }
 
-const CHLPool::HdFigure *CHLPool::GetHdFigure(CHLObj &obj) {
+CHLPool::HdFigure *CHLPool::GetHdFigure(CHLObj &obj) {
     namespace fs = std::filesystem;
     if (!HdChecked) {
         HdChecked = true;

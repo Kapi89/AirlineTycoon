@@ -456,7 +456,9 @@ void CLAN::BlitLargeAt(SBBM &Offscreen, SLONG Dir, SLONG Phase, XY ScreenPos) {
             ScreenPos.x -= pbm->Size.x;
             ScreenPos.y -= pbm->Size.y * 2;
 
+            CHLObj::HdHall = true; // H23: HD-Figuren im Hallenblick der Raeume
             pbm->pHLObj->BlitLargeAt(Offscreen.pBitmap, ScreenPos);
+            CHLObj::HdHall = false;
         }
     }
 }

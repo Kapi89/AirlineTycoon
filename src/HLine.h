@@ -72,9 +72,11 @@ class CHLObj {
     void BlitLargeAt(SB_CBitmapCore *pBitmap, XY Target);
     void BlitLargeAt(SB_CBitmapCore *pBitmap, SLONG tx, SLONG ty) { BlitLargeAt(pBitmap, XY(tx, ty)); }
 
-    // H21b: HD-Figuren. Nur solange HdHall gesetzt ist (Personen in der Halle), sucht BlitAt eine HD-Fassung.
+    // H21b: HD-Figuren. Nur solange HdHall gesetzt ist (Personen in der Halle, H23 auch im Hallenblick der Raeume per
+    // BlitLargeAt), suchen BlitAt und BlitLargeAt eine HD-Fassung.
     static bool HdHall;
     std::shared_ptr<SDL_Surface> Render1x(); // genau die Pixel von BlitAt, Rest = Colorkey (eine Farbe, die nicht vorkommt)
+    static std::shared_ptr<SDL_Surface> Double1x(SDL_Surface *src); // H23: pixelgenau verdoppelt, gleicher Colorkey
 
     friend TEAKFILE &operator<<(TEAKFILE &File, const CHLObj &obj) {
         File.Write((const UBYTE *)&obj.graphicID, 8);
@@ -154,8 +156,9 @@ class CHLPool {
     struct HdFigure {
         std::shared_ptr<SDL_Surface> Src1x; // 1x-Fassung mit Colorkey, die Referenz spielt sie nach
         std::shared_ptr<SDL_Texture> Tex;   // leer: keine passende HD-Datei, bleibt 1x (Pools werden flach kopiert)
+        std::shared_ptr<SDL_Surface> Src2x; // H23: 2-fach vergroessert wie BlitLargeAt, beim ersten Gebrauch angelegt
     };
-    const HdFigure *GetHdFigure(CHLObj &obj);
+    HdFigure *GetHdFigure(CHLObj &obj);
 
   private:
     void ForgetHd();

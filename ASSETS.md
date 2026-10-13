@@ -147,8 +147,10 @@ python3 tools/hd_generate.py /pfad/zum/spiel --nur figuren   # Modell RealESRGAN
 Ergebnis: `hd/gli/<pool>.pol/<ID>.png` in 4-facher Groesse mit Alpha (Verfahren `figur_rgba`), Namen wie im Export.
 Identische Figuren (gleiche MD5) werden nur einmal gerechnet. Im Spiel mit `"OptionRenderScale": 4`:
 
-- Nur Personen in der Halle (Laufen, Gimmicks, Warte-Gimmicks, Roentgenbild) werden in HD gezeichnet; Figuren in
-  Raeumen und die vergroesserten Figuren (`BlitLargeAt`, z. B. Aufsicht) bleiben vorerst 1x.
+- In HD: Personen in der Halle (Laufen, Gimmicks, Warte-Gimmicks, Roentgenbild) und ab H23 die 2-fach vergroesserten
+  Figuren im Hallenblick der Raeume (`BlitLargeAt`: Aufsicht, Buero, DutyFree, Makler). Dafuer reicht dieselbe PNG:
+  die 4x-Textur wird auf die 2-fache Flaeche gezeichnet. Beim Beschneiden oben/links zeichnet `BlitLargeAt` in 1x
+  etwas anders als eine saubere Vergroesserung; dort zeigt das Overlay 1x. Andere Figuren in Raeumen bleiben 1x.
 - `CHLObj::BlitAt` zeichnet die 1x-Pixel wie bisher und traegt die HD-Figur in die HD-Zeichenliste ein. Fuer die
   Referenz bekommt jede Figur beim ersten Zeichnen eine 1x-Fassung mit genau den Pixeln, die `BlitAt` schreibt
   (Colorkey ist eine Farbe, die im Bild nicht vorkommt; Schwarz bleibt also deckend). Wo der Frame nicht zur
