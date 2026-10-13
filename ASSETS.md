@@ -234,7 +234,8 @@ demselben Decoder wie im Spiel:
    (Anfang des Raumnamens genuegt) oder `"dukau, durede"`. Raeume: arabair, aufsicht, bank, buero, designer,
    dutyfree, fracht, kiosk, laptop, lastmin, makler, museum, nasa, personal, reise, ricks, sabotage, security,
    tafel, weltall, werbung, werkstat.
-2. Spiel starten. Beim Laden schreibt die Engine `hd_assets/original/video/<clip>.smk/<bild>.png` (RGBA, Index 0 =
+2. Spiel starten; der Export laeuft gleich beim Programmstart (vor dem Hauptmenue, ohne Partie), im Log steht
+   `OptionHdVideoExport aus AT.json: '...'` und je Clip eine Zeile. Die Engine schreibt `hd_assets/original/video/<clip>.smk/<bild>.png` (RGBA, Index 0 =
    durchsichtig, reines Schwarz wie im Spiel (4,4,4)) und je Clip `frames.csv` (Raeume, Groesse, Bounding-Box der
    deckenden Pixel je Bild). Fehlende Clips stehen im Log. Danach die Option wieder auf `""` setzen.
 3. Zaehlen: `python3 tools/video_count.py <spiel>/hd_assets/original/video` (`--clips` fuer eine Zeile je Clip). Je

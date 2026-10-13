@@ -3992,9 +3992,13 @@ void COptions::ReadOptions() {
             OptionHdPolCheck = 0;
         }
         {
-            static char text[8192]; // ReadRegistryKeyEx schreibt so viel, wie in AT.json steht (lange Clip-Listen)
-            text[0] = 0;
-            OptionHdVideoExport = reg.ReadRegistryKeyEx(text, "OptionHdVideoExport") ? CString(text) : CString("");
+            CString type;
+            if (!reg.ReadRegistryKeyEx_s(OptionHdVideoExport, "OptionHdVideoExport", &type)) {
+                OptionHdVideoExport = "";
+            }
+            if (OptionHdVideoExport.GetLength() > 0 || type != "fehlt") {
+                AT_Log_I("HD", "OptionHdVideoExport aus AT.json: '%s' (%s)", (LPCTSTR)OptionHdVideoExport, (LPCTSTR)type);
+            }
         }
         if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
             OptionHdOverlayFilter = 0;
