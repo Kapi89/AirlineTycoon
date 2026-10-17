@@ -10,6 +10,10 @@
 #include <smacker.h>
 
 #include <cmath>
+#include <SDL_image.h>
+
+#include <cctype>
+#include <cstdio>
 
 #define AT_Error(...) Hdu.HercPrintfMsg(SDL_LOG_PRIORITY_ERROR, "SMACK", __VA_ARGS__)
 #define AT_Warn(...) Hdu.HercPrintfMsg(SDL_LOG_PRIORITY_WARN, "SMACK", __VA_ARGS__)
@@ -93,6 +97,8 @@ char FlcWrapper::next() { return render(); }
 const unsigned char *FlcWrapper::get_video() { return Buffer.data(); }
 
 const flic::Colormap &FlcWrapper::get_palette() { return Frame.colormap; }
+
+long FlcWrapper::current_index() { return long(Decoder.getCurrentFrameCount()) - 1; }
 
 void FlcWrapper::init_decoder() {
     if (f) {
@@ -588,6 +594,8 @@ void CSmackerPerson::CopyFrameSmk() {
         memcpy(key.Bitmap, smk_get_video(Clips[ActiveClip].pSmack), key.lPitch * Clips[ActiveClip].Height);
     }
     BitmapPos = Clips[ActiveClip].ScreenOffset;
+    HdBitmapClip = ActiveClip; // H25c: welches Bild steht jetzt in Bitmap
+    HdBitmapFrame = SLONG(Clips[ActiveClip].FrameNum);
 }
 
 void CSmackerPerson::DecodeFrameSmk() {
@@ -610,6 +618,8 @@ void CSmackerPerson::CopyFrameFlc() {
         memcpy(key.Bitmap, Clips[ActiveClip].pFlc->get_video(), key.lPitch * Clips[ActiveClip].Height);
     }
     BitmapPos = Clips[ActiveClip].ScreenOffset;
+    HdBitmapClip = ActiveClip; // H25c: welches Bild steht jetzt in Bitmap
+    HdBitmapFrame = SLONG(Clips[ActiveClip].pFlc->current_index()); // FrameNum ist bei FLC 1-basiert
 }
 
 void CSmackerPerson::DecodeFrameFlc() {
@@ -1027,10 +1037,163 @@ found_next_clip:
 //--------------------------------------------------------------------------------------------
 // Blittet eine Person in eine Bitmap:
 //--------------------------------------------------------------------------------------------
+static std::string HdClipName(const CString &filename);
+static std::shared_ptr<SDL_Surface> HdFrame565(SDL_Surface *frame, const SDL_Rect &crop);
+
 void CSmackerPerson::BlitAtT(SBBM &RoomBm, XY Offset) {
     if (clipExists(ActiveClip)) {
         RoomBm.BlitFromT(Bitmap, BitmapPos + Offset);
+
+        // H25c: HD-Fassung des Bildes; Referenz ist eine 1x-Kopie des Bildes (bei Abweichung zeigt das Overlay 1x)
+        if (SB_GetRenderScale() > 1 && Bitmap.pBitmap != nullptr && RoomBm.pBitmap != nullptr) {
+            if (const auto *hd = GetHdFrame()) {
+                const HdVideoClip &c = HdClips[HdClipName(Clips[HdBitmapClip].Filename)];
+                auto src = HdFrame565(Bitmap.pBitmap->GetSurface(), c.Crop);
+                if (src) {
+                    const XY p = BitmapPos + Offset;
+                    SB_RecordHdSprite(RoomBm.pBitmap, src, hd->Tex.get(), p.x + c.Crop.x, p.y + c.Crop.y, hd->Scale);
+                }
+            }
+        }
     }
+}
+
+//--------------------------------------------------------------------------------------------
+// H25c: HD-Bilder der animierten Personen (hd/video/<clip>.smk/<NNNN>.png, Nummer wie im Export von H25a)
+//--------------------------------------------------------------------------------------------
+static const long long HdVideoMaxBytes = 512LL * 1024 * 1024; // Obergrenze je Figur; darueber bleiben weitere Bilder 1x
+
+static std::string HdClipName(const CString &filename) {
+    std::string n = fs::path((LPCTSTR)filename).filename().string();
+    for (auto &ch : n) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return n;
+}
+
+// Das Bild (8 Bit mit Palette, Index 0 durchsichtig) als RGB565 mit Colorkey 0, so wie es in den Raum geblittet wird
+// (CalculatePalettemapper macht reines Schwarz zu (4,4,4), 0x0000 kommt also nur als Colorkey vor)
+static std::shared_ptr<SDL_Surface> HdFrame565(SDL_Surface *frame, const SDL_Rect &crop) {
+    if (frame == nullptr || frame->format->BytesPerPixel != 1 || frame->format->palette == nullptr) {
+        return nullptr;
+    }
+    const SDL_Rect r = crop.w > 0 ? crop : SDL_Rect{0, 0, frame->w, frame->h};
+    if (r.x < 0 || r.y < 0 || r.x + r.w > frame->w || r.y + r.h > frame->h) {
+        return nullptr;
+    }
+    SDL_Surface *out = SDL_CreateRGBSurfaceWithFormat(0, r.w, r.h, 16, SDL_PIXELFORMAT_RGB565);
+    if (out == nullptr) {
+        return nullptr;
+    }
+    Uint16 map[256];
+    const SDL_Palette *pal = frame->format->palette;
+    for (int i = 0; i < 256; i++) {
+        const SDL_Color c = i < pal->ncolors ? pal->colors[i] : SDL_Color{0, 0, 0, 255};
+        map[i] = i == 0 ? 0 : Uint16(SDL_MapRGB(out->format, c.r, c.g, c.b));
+    }
+    SDL_LockSurface(frame);
+    SDL_LockSurface(out);
+    for (int y = 0; y < r.h; y++) {
+        const auto *in = static_cast<const Uint8 *>(frame->pixels) + (r.y + y) * frame->pitch + r.x;
+        auto *o = reinterpret_cast<Uint16 *>(static_cast<Uint8 *>(out->pixels) + y * out->pitch);
+        for (int x = 0; x < r.w; x++) {
+            o[x] = map[in[x]];
+        }
+    }
+    SDL_UnlockSurface(out);
+    SDL_UnlockSurface(frame);
+    SDL_SetColorKey(out, SDL_TRUE, 0);
+    return std::shared_ptr<SDL_Surface>(out, SDL_FreeSurface);
+}
+
+const CSmackerPerson::HdVideoFrame *CSmackerPerson::GetHdFrame() {
+    if (HdBitmapClip < 0 || HdBitmapClip >= Clips.AnzEntries() || HdBitmapFrame < 0) {
+        return nullptr;
+    }
+    const std::string name = HdClipName(Clips[HdBitmapClip].Filename);
+    HdVideoClip &c = HdClips[name];
+    if (!c.Checked) {
+        c.Checked = true;
+        const fs::path dir = fs::path((LPCTSTR)AppPath) / "hd" / "video" / name;
+        std::error_code ec;
+        if (fs::is_directory(dir, ec)) {
+            c.Dir = dir.string();
+            FILE *f = fopen((dir / "crop.csv").string().c_str(), "r");
+            if (f != nullptr) {
+                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                if (fscanf(f, "%d;%d;%d;%d", &x0, &y0, &x1, &y1) == 4 && x1 > x0 && y1 > y0) {
+                    c.Crop = SDL_Rect{x0, y0, x1 - x0, y1 - y0};
+                }
+                fclose(f);
+            }
+            AT_Log_I("HD", "HD-Bilder aus %s%s", c.Dir.c_str(), c.Crop.w > 0 ? " (zugeschnitten)" : "");
+        }
+    }
+    if (c.Dir.empty()) {
+        return nullptr;
+    }
+    auto it = c.Frames.find(HdBitmapFrame);
+    if (it != c.Frames.end()) {
+        return it->second.Tex ? &it->second : nullptr;
+    }
+
+    HdVideoFrame &hf = c.Frames[HdBitmapFrame];
+    char file[16];
+    snprintf(file, sizeof(file), "%04ld.png", long(HdBitmapFrame));
+    const fs::path path = fs::path(c.Dir) / file;
+    std::error_code ec;
+    SDL_Surface *frame = Bitmap.pBitmap->GetSurface();
+    if (HdFull || !fs::is_regular_file(path, ec) || frame == nullptr || frame->format->BytesPerPixel != 1) {
+        return nullptr;
+    }
+    const SDL_Rect r = c.Crop.w > 0 ? c.Crop : SDL_Rect{0, 0, frame->w, frame->h};
+    SDL_Surface *png = IMG_Load(path.string().c_str());
+    SDL_Surface *rgba = png != nullptr ? SDL_ConvertSurfaceFormat(png, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
+    SDL_FreeSurface(png);
+    if (rgba == nullptr) {
+        AT_Log_I("HD", "%s nicht lesbar", path.string().c_str());
+        return nullptr;
+    }
+    const int k = r.w > 0 ? rgba->w / r.w : 0;
+    if (k < 2 || rgba->w != r.w * k || rgba->h != r.h * k || r.x + r.w > frame->w || r.y + r.h > frame->h) {
+        AT_Log_I("HD", "%s hat %dx%d Pixel, erwartet ein Vielfaches von %dx%d; bleibt 1x", path.string().c_str(), rgba->w, rgba->h, r.w, r.h);
+        SDL_FreeSurface(rgba);
+        return nullptr;
+    }
+    // Passt die HD-Datei zu diesem Bild? Deckend in 1x <-> Alpha in der Mitte des k x k-Blocks (Rand toleriert)
+    long differ = 0;
+    SDL_LockSurface(frame);
+    SDL_LockSurface(rgba);
+    for (int y = 0; y < r.h; y++) {
+        const auto *in = static_cast<const Uint8 *>(frame->pixels) + (r.y + y) * frame->pitch + r.x;
+        const auto *hdRow = static_cast<const Uint8 *>(rgba->pixels) + (y * k + k / 2) * rgba->pitch;
+        for (int x = 0; x < r.w; x++) {
+            differ += (in[x] != 0) != (hdRow[(x * k + k / 2) * 4 + 3] >= 128) ? 1 : 0;
+        }
+    }
+    SDL_UnlockSurface(rgba);
+    SDL_UnlockSurface(frame);
+    if (differ * 50 > long(r.w) * r.h) {
+        AT_Log_I("HD", "%s passt nicht zum Bild im Spiel (%ld von %d Pixeln), bleibt 1x", path.string().c_str(), differ, r.w * r.h);
+        SDL_FreeSurface(rgba);
+        return nullptr;
+    }
+    const long long bytes = 4LL * rgba->w * rgba->h;
+    if (HdBytes + bytes > HdVideoMaxBytes) {
+        HdFull = true;
+        AT_Log_I("HD", "HD-Bilder: Obergrenze %lld MB fuer diese Figur erreicht, weitere Bilder bleiben 1x", HdVideoMaxBytes / (1024 * 1024));
+        SDL_FreeSurface(rgba);
+        return nullptr;
+    }
+    SDL_Texture *tex = SB_CreateHdSpriteTexture(rgba);
+    SDL_FreeSurface(rgba);
+    if (tex == nullptr) {
+        return nullptr;
+    }
+    HdBytes += bytes;
+    hf.Tex = std::shared_ptr<SDL_Texture>(tex, SB_ForgetHdTexture); // frei, wenn die Figur (der Raum) verschwindet
+    hf.Scale = k;
+    return &hf;
 }
 
 //--------------------------------------------------------------------------------------------
