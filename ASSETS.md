@@ -237,7 +237,10 @@ demselben Decoder wie im Spiel:
 2. Spiel starten; der Export laeuft gleich beim Programmstart (vor dem Hauptmenue, ohne Partie), im Log steht
    `OptionHdVideoExport aus AT.json: '...'` und je Clip eine Zeile. Die Engine schreibt `hd_assets/original/video/<clip>.smk/<bild>.png` (RGBA, Index 0 =
    durchsichtig, reines Schwarz wie im Spiel (4,4,4)) und je Clip `frames.csv` (Raeume, Groesse, Bounding-Box der
-   deckenden Pixel je Bild). Fehlende Clips stehen im Log. Danach die Option wieder auf `""` setzen.
+   deckenden Pixel je Bild). Fehlende Clips stehen im Log. Danach setzt das Spiel die Option selbst auf `""` zurueck
+   und speichert `AT.json` gleich (Log: `OptionHdVideoExport in AT.json auf "" zurueckgesetzt`), der Export laeuft
+   also nur einmal. Hinweis: Das Spiel schreibt `AT.json` beim Beenden komplett neu; Aenderungen an der Datei,
+   waehrend das Spiel laeuft, gehen dabei verloren. `AT.json` also nur bei beendetem Spiel bearbeiten.
 3. Zaehlen: `python3 tools/video_count.py <spiel>/hd_assets/original/video` (`--clips` fuer eine Zeile je Clip). Je
    Raum: Clips, Bilder, verschiedene Bilder (MD5), geschaetzter Grafikspeicher bei 2x und 4x, zugeschnitten auf die
    Bounding-Box des Clips (in Klammern ohne Zuschnitt), dazu die insgesamt hochzurechnende Flaeche.
@@ -258,6 +261,26 @@ Die Engine zeigt die Bilder der Smacker-Personen in HD, wenn es zu Clip und Bild
 - Referenz ist eine 1x-Kopie des Bildes; wo der Frame nicht passt, zeigt das Overlay 1x.
 - Die Texturen gehoeren der Figur: Sie werden beim ersten Zeigen geladen und mit dem Raum freigegeben. Je Figur
   hoechstens 512 MB; darueber bleiben weitere Bilder 1x (Log), z. B. fuer die grossen Clips SO_* und De*.
+
+### Animierte Personen hochrechnen (H25b, Generator-Kategorie animationen)
+
+```
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum duty      # ein Raum (Anfang des Namens)
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum bank,makler
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen                  # alle exportierten Clips
+```
+
+- Eingabe ist der Engine-Export (H25a) in `hd_assets/original/video`; fehlt er, nennt der Generator die Option
+  `OptionHdVideoExport`. Die Animationen gehoeren nicht zum Standardumfang (lange Rechenzeit, auf der CPU etwa
+  17 Minuten je Million Pixel): nur mit `--nur animationen`.
+- Verfahren `figur_rgba` mit RealESRGAN_x4plus (wie die Figuren der Halle, H21b), Regel `video/*.smk/*` im Manifest.
+- Zuschnitt: Bounding-Box des Clips aus `frames.csv` (ueber alle Bilder) plus 2 px, im Bild. Ausgabe
+  `hd/video/<clip>.smk/<NNNN>.png` (zugeschnitten, 4x) und `crop.csv` (`x0;y0;x1;y1`) je Clip; `crop.csv` wird vor dem
+  Rechnen geschrieben. Leere Bilder (nichts deckend) werden nicht gerechnet und bleiben 1x.
+- Gleiche Bilder (MD5 der Export-PNG, gleicher Zuschnitt) werden nur einmal gerechnet und sonst aus dem Cache kopiert.
+- Vorhandene Ausgaben in anderer Groesse (z. B. Vollformat 832x1040 von Hand) gelten als veraltet und werden neu
+  gerechnet. Abbruch mit Strg+C, ein neuer Start setzt fort (wie bei den anderen Kategorien).
+- `--raum` vergleicht mit den Raeumen in `frames.csv` (Liste siehe H25a); `--liste` zeigt nur die offenen Bilder.
 
 ### Denkblasen in der Halle (H22)
 

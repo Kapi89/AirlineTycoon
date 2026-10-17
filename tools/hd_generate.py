@@ -5,6 +5,7 @@ Aufruf:
   python3 tools/hd_generate.py SPIELORDNER [Optionen]
   python3 tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur schriften
   python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu
+  python3 tools/hd_generate.py SPIELORDNER --nur animationen --raum duty   # Animationen nur auf Wunsch, raumweise
 
 Der Datenordner (mit gli/) wird im angegebenen Ordner gesucht, auch tief in einem Mac-.app-Paket. Dort sucht das
 Spiel auch hd/, dorthin gehoert also auch die neue AT.exe bzw. AT. --gpu nutzt CUDA (NVIDIA) oder MPS (Apple-Chip).
@@ -15,7 +16,8 @@ Ablauf:
   2. Verfahren je Bild aus tools/hdgen/manifest.json: zuerst Eintrag, dann Regel, sonst "auto".
   3. Hochrechnen (4x) mit den Verfahren aus tools/hdgen/hd_methods.py.
   4. Ablegen als hd/<ordner>/<datei>/<CHUNK>.png bzw. hd/<ordner>/<schrift>.mcf.png neben der AT.exe
-     (Figuren: hd/gli/<pool>.pol/<ID>.png).
+     (Figuren: hd/gli/<pool>.pol/<ID>.png; Animationen aus dem Engine-Export hd_assets/original/video:
+     hd/video/<clip>.smk/<NNNN>.png, zugeschnitten, dazu crop.csv).
 
 Gleiche Eingaben (MD5 der PNG plus Verfahren und Modell) werden nur einmal gerechnet; vorhandene
 Ausgaben werden uebersprungen. Ein abgebrochener Lauf (Strg+C) wird beim naechsten Start fortgesetzt.
@@ -50,7 +52,9 @@ MANIFEST = os.path.join(TOOLS, "hdgen", "manifest.json")
 # Stand je Verfahren: wird erhoeht, wenn sich das Ergebnis eines Verfahrens aendert. Ausgaben, die mit einem aelteren
 # Stand gerechnet wurden, erkennt der Cache und rechnet sie neu (H18b: Stadtfotos am Stueck statt in Kacheln).
 VERFAHREN_STAND = {"foto_rgb": 2}
-KATEGORIEN = ("schriften", "stadtfotos", "ui", "raeume", "bausteine", "figuren")  # auch Reihenfolge der Bearbeitung
+KATEGORIEN = ("schriften", "stadtfotos", "ui", "raeume", "bausteine", "figuren", "animationen")  # auch Reihenfolge der Bearbeitung
+NUR_AUF_WUNSCH = {"animationen"}  # lange Rechenzeit: nur mit --nur animationen
+VIDEO_RAND = 2  # Zuschnitt der Animationen: Bounding-Box des Clips plus so viele Pixel (1x)
 
 MODELLE = {
     "ultrasharp": {
@@ -96,6 +100,8 @@ class Plan:
 
     @staticmethod
     def kategorie(schluessel, verfahren):
+        if schluessel.startswith("video/"):
+            return "animationen"
         if ".pol/" in schluessel:
             return "figuren"
         if verfahren == "foto_rgb":
@@ -257,7 +263,7 @@ def sha256(path):
 
 def exportieren(spiel, original, plan, kategorien):
     n_bilder = n_schriften = fehler = 0
-    if kategorien - {"schriften", "figuren"}:
+    if kategorien - {"schriften", "figuren", "animationen"}:
         archive = list(gli_export.find_archives([spiel], original))
         for i, path in enumerate(archive, 1):
             folder = os.path.basename(os.path.dirname(os.path.abspath(path))).lower()
@@ -310,13 +316,48 @@ class Auftrag:
         """MD5 der Eingabe plus alles, was das Ergebnis bestimmt."""
         with open(self.quelle, "rb") as fh:
             md5 = hashlib.md5(fh.read()).hexdigest()
-        extra = json.dumps([self.ink, self.bg, self.par], sort_keys=True) if self.kategorie == "schriften" else ""
+        extra = json.dumps([self.ink, self.bg, self.par], sort_keys=True) if self.kategorie in ("schriften", "animationen") else ""
         stand = VERFAHREN_STAND.get(self.verfahren, 1)
         return f"{md5}|{self.verfahren}|{self.modell}|{extra}" + (f"|v{stand}" if stand > 1 else "")
 
 
-def auftraege_sammeln(original, ziel, plan, kategorien):
+def video_clip(ordner):
+    """frames.csv eines Clips aus dem Engine-Export (H25a): (Raeume, Breite, Hoehe, Boxen je Bild, Zuschnitt).
+    Zuschnitt: Bounding-Box aller Bilder plus VIDEO_RAND, im Bild; None, wenn alle Bilder leer sind."""
+    raeume, w, h, boxen = [], 0, 0, []
+    with open(os.path.join(ordner, "frames.csv"), encoding="utf-8") as fh:
+        for line in fh:
+            t = line.strip().split(";")
+            if t[0] == "rooms":
+                raeume = [r for r in t[1:] if r]
+            elif t[0] == "size":
+                w, h = int(t[1]), int(t[2])
+            elif t[0] == "frame":
+                x0, y0, x1, y1 = (int(v) for v in t[2:6])
+                boxen.append(None if x1 < 0 else (x0, y0, x1, y1))
+    b = [x for x in boxen if x]
+    crop = None
+    if b:
+        crop = (max(0, min(x[0] for x in b) - VIDEO_RAND), max(0, min(x[1] for x in b) - VIDEO_RAND),
+                min(w, max(x[2] for x in b) + VIDEO_RAND), min(h, max(x[3] for x in b) + VIDEO_RAND))
+    return raeume, w, h, boxen, crop
+
+
+def png_groesse(pfad):
+    """Breite, Hoehe aus dem PNG-Kopf (ohne Bildbibliothek); None, wenn keine PNG."""
+    try:
+        with open(pfad, "rb") as fh:
+            kopf = fh.read(24)
+        if kopf[:8] == b"\x89PNG\r\n\x1a\n" and kopf[12:16] == b"IHDR":
+            return struct.unpack(">II", kopf[16:24])
+    except OSError:
+        pass
+    return None
+
+
+def auftraege_sammeln(original, ziel, plan, kategorien, raeume=None):
     auftraege, unbekannte_schriften = [], []
+    clips, leer, andere_raeume = {}, 0, set()
     for root, dirs, files in os.walk(original):
         dirs.sort()
         for f in sorted(files):
@@ -324,7 +365,29 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
                 continue
             quelle = os.path.join(root, f)
             rel = os.path.relpath(quelle, original).replace(os.sep, "/")
-            if f.endswith(".mcf.png"):
+            if rel.startswith("video/"):
+                # Animationen (H25b): Bilder aus dem Engine-Export, zugeschnitten auf die Box des Clips
+                if "animationen" not in kategorien:
+                    continue
+                if root not in clips:
+                    try:
+                        clips[root] = video_clip(root)
+                    except (OSError, ValueError, IndexError):
+                        clips[root] = None
+                info = clips[root]
+                if info is None:
+                    continue
+                c_raeume, _, _, boxen, crop = info
+                if raeume and not any(r.startswith(p) for r in c_raeume for p in raeume):
+                    andere_raeume.add(root)
+                    continue
+                n = int(f[:-4]) if f[:-4].isdigit() else -1
+                if crop is None or n < 0 or n >= len(boxen) or boxen[n] is None:
+                    leer += 1  # leeres Bild: bleibt 1x (zeigt ohnehin nichts)
+                    continue
+                verfahren, modell, kat = plan.bild(rel[:-len(".png")])
+                a = Auftrag(quelle, os.path.join(ziel, *rel.split("/")), rel, verfahren, modell, kat, par={"crop": list(crop)})
+            elif f.endswith(".mcf.png"):
                 name = f[:-len(".mcf.png")]
                 verfahren, modell, ink, bg, par, bekannt = plan.schrift(name)
                 if not bekannt:
@@ -338,8 +401,44 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
     if unbekannte_schriften:
         print(f"Hinweis: {len(unbekannte_schriften)} Schrift(en) ohne Eintrag im Manifest, Verfahren schrift_standard: "
               + ", ".join(unbekannte_schriften))
+    if "animationen" not in kategorien and os.path.isdir(os.path.join(original, "video")):
+        print("Hinweis: Animationen (Video-Export vorhanden) gehoeren nicht zum Standardumfang: "
+              "--nur animationen [--raum <name>]")
+    if "animationen" in kategorien:
+        nclips = len([c for c in clips.values() if c]) - len(andere_raeume)
+        if not clips:
+            print(f"Hinweis: kein Video-Export in {os.path.join(original, 'video')}. Die Animationen exportiert das Spiel "
+                  "selbst: in AT.json \"OptionHdVideoExport\": \"alle\" (oder Raeume) setzen und das Spiel starten.")
+        else:
+            print(f"Animationen: {nclips} Clips" + (f" (Raum {', '.join(raeume)})" if raeume else "")
+                  + (f", {leer} leere Bilder bleiben 1x" if leer else ""))
     auftraege.sort(key=lambda a: (KATEGORIEN.index(a.kategorie), a.rel))
     return auftraege
+
+
+def crop_csv_schreiben(ziel, auftraege):
+    """Animationen: crop.csv je Clip (x0;y0;x1;y1 im 1x-Bild), daran erkennt die Engine die zugeschnittenen Bilder."""
+    for ordner, crop in sorted({(os.path.dirname(a.ziel), tuple(a.par["crop"])) for a in auftraege if a.kategorie == "animationen"}):
+        pfad = os.path.join(ordner, "crop.csv")
+        inhalt = ";".join(str(v) for v in crop) + "\n"
+        try:
+            with open(pfad, encoding="utf-8") as fh:
+                if fh.read() == inhalt:
+                    continue
+        except OSError:
+            pass
+        os.makedirs(ordner, exist_ok=True)
+        with open(pfad + ".tmp", "w", encoding="utf-8") as fh:
+            fh.write(inhalt)
+        os.replace(pfad + ".tmp", pfad)
+
+
+def falsche_groesse(a):
+    """Animationen: vorhandene Ausgabe passt nicht zum Zuschnitt (z. B. Vollformat von Hand) -> neu rechnen."""
+    if a.kategorie != "animationen":
+        return False
+    x0, y0, x1, y1 = a.par["crop"]
+    return png_groesse(a.ziel) != ((x1 - x0) * 4, (y1 - y0) * 4)
 
 
 # ---------------------------------------------------------------- Rechnen
@@ -347,6 +446,8 @@ def auftraege_sammeln(original, ziel, plan, kategorien):
 def rechnen(a, hm, modelle):
     from PIL import Image
     im = Image.open(a.quelle)
+    if a.par.get("crop"):
+        im = im.crop(tuple(a.par["crop"]))  # Animationen: Ausschnitt des Clips (crop.csv)
     model = hm.load_model(modelle[a.modell], ARGS.threads) if a.modell else None
     if a.verfahren in hm.BILD_VERFAHREN:
         return hm.BILD_VERFAHREN[a.verfahren](model, im)
@@ -447,7 +548,10 @@ def main():
     ap.add_argument("spiel", help="Ordner der Spielinstallation (oder darueber, z. B. das .app-Paket auf dem Mac)")
     ap.add_argument("--ausgabe", help="Zielordner hd/ (Standard: hd/ neben der AT.exe)")
     ap.add_argument("--arbeit", help="Arbeitsordner fuer Export und Cache (Standard: hd_assets/ neben hd/)")
-    ap.add_argument("--nur", help="nur diese Kategorien, mit Komma getrennt: " + ", ".join(KATEGORIEN))
+    ap.add_argument("--nur", help="nur diese Kategorien, mit Komma getrennt: " + ", ".join(KATEGORIEN)
+                    + " (animationen nur auf Wunsch, nicht im Standardumfang)")
+    ap.add_argument("--raum", help="Animationen nur fuer diese Raeume (Anfang des Namens genuegt, mit Komma getrennt), "
+                                   "z. B. duty oder bank,makler")
     ap.add_argument("--gpu", action="store_true",
                     help="auf der Grafikkarte rechnen: CUDA (NVIDIA) oder MPS (Mac mit Apple-Chip), sonst CPU; nicht bitgleich zur CPU")
     ap.add_argument("--threads", type=int, default=4, help="CPU-Threads fuer torch (Standard 4, wie beim Referenzpaket)")
@@ -467,7 +571,10 @@ def main():
         if falsch:
             raise SystemExit(f"--nur: unbekannte Kategorie {', '.join(sorted(falsch))} (erlaubt: {', '.join(KATEGORIEN)})")
     else:
-        kategorien = set(KATEGORIEN)
+        kategorien = set(KATEGORIEN) - NUR_AUF_WUNSCH
+    raeume = [r.strip().lower() for r in args.raum.split(",") if r.strip()] if args.raum else None
+    if raeume and "animationen" not in kategorien:
+        print("Hinweis: --raum gilt nur fuer die Animationen (--nur animationen)")
 
     spiel = os.path.abspath(os.path.expanduser(args.spiel))
     if not os.path.isdir(spiel):
@@ -489,7 +596,8 @@ def main():
     print(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {', '.join(k for k in KATEGORIEN if k in kategorien)}")
     plan = Plan(bausteine_modellkante=args.bausteine_modellkante)
     fehler = exportieren(spiel, original, plan, kategorien)
-    auftraege = auftraege_sammeln(original, ziel, plan, kategorien)
+    auftraege = auftraege_sammeln(original, ziel, plan, kategorien, raeume)
+    crop_csv_schreiben(ziel, auftraege)
 
     zaehler = {}
     for a in auftraege:
@@ -499,10 +607,10 @@ def main():
     os.makedirs(arbeit, exist_ok=True)
     cache = Cache(os.path.join(arbeit, "hd_cache.jsonl"), ziel)
     fehlend = [a for a in auftraege if not os.path.exists(a.ziel)]
-    veraltet = [a for a in auftraege if os.path.exists(a.ziel) and cache.veraltet(a.rel, a.schluessel())]
+    veraltet = [a for a in auftraege if os.path.exists(a.ziel) and (cache.veraltet(a.rel, a.schluessel()) or falsche_groesse(a))]
     offen = sorted(fehlend + veraltet, key=lambda a: (KATEGORIEN.index(a.kategorie), a.rel))
     print(f"{len(auftraege)} Bilder, davon {len(auftraege) - len(offen)} schon vorhanden, {len(offen)} offen"
-          + (f" ({len(veraltet)} mit geaendertem Verfahren neu)" if veraltet else "") + ".")
+          + (f" ({len(veraltet)} neu: Verfahren oder Zuschnitt geaendert)" if veraltet else "") + ".")
     if args.liste or not offen:
         return 1 if fehler else 0
 
