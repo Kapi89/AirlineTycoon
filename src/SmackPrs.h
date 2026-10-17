@@ -40,6 +40,9 @@
 #include <flic.h>
 
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <string>
 
 typedef XY CRepeat;
 typedef XY CPostWait;
@@ -85,6 +88,7 @@ class FlcWrapper {
     char next();
     const unsigned char *get_video();
     const flic::Colormap &get_palette();
+    long current_index(); // H25c: Index des Bildes im Puffer (0-basiert; info_all zaehlt die gelesenen Bilder)
 
   private:
     void init_decoder();
@@ -216,4 +220,22 @@ class CSmackerPerson {
     void Pump(void);
     void BlitAtT(SBBM &RoomBm);
     void BlitAtT(SBBM &RoomBm, XY Offset);
+
+  private: // H25c: HD-Bilder hd/video/<clip>.smk/<NNNN>.png (s-fache Groesse, Alpha), werden mit der Figur freigegeben
+    struct HdVideoFrame {
+        std::shared_ptr<SDL_Texture> Tex; // leer: keine passende HD-Datei, Bild bleibt 1x
+        SLONG Scale{0};                   // Texturpixel je 1x-Pixel
+    };
+    struct HdVideoClip {
+        bool Checked{false};
+        std::string Dir;  // leer: keine HD-Bilder fuer diesen Clip
+        SDL_Rect Crop{};  // zugeschnittene Bilder (crop.csv): Bereich im 1x-Bild, sonst das ganze Bild
+        std::map<SLONG, HdVideoFrame> Frames;
+    };
+    std::map<std::string, HdVideoClip> HdClips; // je Clip-Datei
+    SLONG HdBitmapClip{-1};                     // Clip und Bild, die gerade in Bitmap stehen
+    SLONG HdBitmapFrame{-1};
+    long long HdBytes{0};
+    bool HdFull{false};
+    const HdVideoFrame *GetHdFrame();
 };

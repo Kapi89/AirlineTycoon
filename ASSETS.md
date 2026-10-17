@@ -244,6 +244,21 @@ demselben Decoder wie im Spiel:
 
 Wie alle Exporte gehoert nichts davon ins Git (`hd_assets/` ist gitignored, Asset-Guard).
 
+### Animierte Personen in Raeumen in HD (H25c, Pilot Duty-Free)
+
+Die Engine zeigt die Bilder der Smacker-Personen in HD, wenn es zu Clip und Bild eine PNG gibt:
+
+- `hd/video/<clip>.smk/<NNNN>.png` neben der `AT.exe`, Nummer wie im Export (H25a, ab 0000), RGBA mit Alpha.
+- Volle Groesse: ein ganzzahliges Vielfaches k >= 2 des Clip-Bildes (bei 4x z. B. 832x1040 fuer 208x260; 2x geht auch).
+- Zugeschnitten: `crop.csv` im Clip-Ordner mit `x0;y0;x1;y1` (1x, x1/y1 exklusiv, z. B. die Bounding-Box aus
+  `frames.csv`); dann sind die PNGs ein Vielfaches dieses Ausschnitts und werden mit dem Versatz gezeichnet.
+- Beim ersten Gebrauch wird jedes HD-Bild gegen das Bild im Spiel geprueft (deckend in 1x gegen Alpha in der Mitte
+  des Blocks); weichen mehr als 2 % ab (falsche Nummer, anderer Clip), bleibt es 1x (Log: "passt nicht zum Bild").
+  Falsche Groesse: Log "erwartet ein Vielfaches", bleibt 1x.
+- Referenz ist eine 1x-Kopie des Bildes; wo der Frame nicht passt, zeigt das Overlay 1x.
+- Die Texturen gehoeren der Figur: Sie werden beim ersten Zeigen geladen und mit dem Raum freigegeben. Je Figur
+  hoechstens 512 MB; darueber bleiben weitere Bilder 1x (Log), z. B. fuer die grossen Clips SO_* und De*.
+
 ### Denkblasen in der Halle (H22)
 
 Die Denkblasen ueber den Figuren (`OptionThinkBubbles`) sind die GLI-Chunks `MOOD00` bis `MOOD42` aus
