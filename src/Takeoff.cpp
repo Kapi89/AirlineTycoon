@@ -526,6 +526,11 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
     // Zaehlung danach mit tools/video_count.py
     if (Sim.Options.OptionHdVideoExport.GetLength() > 0) {
         HdVideoExport(std::string((LPCTSTR)Sim.Options.OptionHdVideoExport));
+        // Einmalig: Option zuruecksetzen und gleich speichern. AT.json schreibt das Spiel auch beim Beenden komplett
+        // neu, Aenderungen an der Datei waehrend das Spiel laeuft gehen dabei verloren.
+        Sim.Options.OptionHdVideoExport = "";
+        Sim.SaveOptions();
+        AT_Log_I("HD", "Video-Export: OptionHdVideoExport in AT.json auf \"\" zurueckgesetzt");
     }
 
     CreateVideo();
