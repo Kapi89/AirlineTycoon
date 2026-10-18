@@ -2461,6 +2461,8 @@ class COptions {
     SLONG OptionWidescreen{};  // Breitbild (H13): 1 = Leinwand nach Fenster-Seitenverhaeltnis (16:10 -> 768, 16:9 -> 854), 0 = aus
     SLONG OptionWidescreenRoomBorder{}; // Breitbild (H16): Raender neben Raeumen 1 = weichgezeichnet aus dem Bild, 0 = schwarz
     SLONG OptionHdPolCheck{};           // Debug (H21a): 1 = beim Start Export-PNGs der Figuren (hd_assets/original) gegen die Engine pruefen
+    SLONG OptionHdVideo{1};             // H25d: 1 = animierte Personen in Raeumen in HD (hd/video), 0 = immer 1x
+    SLONG OptionHdVideoMaxMB{1024};     // H25d: Grafikspeicher je Figur; passt sie nicht, ganze Figur in 2x (oder 1x)
     CString OptionHdVideoExport;        // H25a: beim Start Personen-Videos exportieren ("" = aus, "alle", Raeume/Clips, z. B. "duty")
     SLONG OptionHdOverlayFilter{}; // Filter fuer das 1x-Overlay ueber HD-Hintergruenden: 0 = nearest, 1 = linear
     BOOL OptionHdMissingLog{};     // 1: jeder GLI-Chunk ohne HD-PNG einmal als "HD fehlt" im Log (mit Raum, Pfad, Groesse)

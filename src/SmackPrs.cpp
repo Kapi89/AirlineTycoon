@@ -12,8 +12,18 @@
 #include <cmath>
 #include <SDL_image.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <deque>
+#include <fstream>
+#include <mutex>
+#include <thread>
+#include <tuple>
+#include <vector>
 
 #define AT_Error(...) Hdu.HercPrintfMsg(SDL_LOG_PRIORITY_ERROR, "SMACK", __VA_ARGS__)
 #define AT_Warn(...) Hdu.HercPrintfMsg(SDL_LOG_PRIORITY_WARN, "SMACK", __VA_ARGS__)
@@ -618,7 +628,7 @@ void CSmackerPerson::CopyFrameFlc() {
         memcpy(key.Bitmap, Clips[ActiveClip].pFlc->get_video(), key.lPitch * Clips[ActiveClip].Height);
     }
     BitmapPos = Clips[ActiveClip].ScreenOffset;
-    HdBitmapClip = ActiveClip; // H25c: welches Bild steht jetzt in Bitmap
+    HdBitmapClip = ActiveClip;                                      // H25c: welches Bild steht jetzt in Bitmap
     HdBitmapFrame = SLONG(Clips[ActiveClip].pFlc->current_index()); // FrameNum ist bei FLC 1-basiert
 }
 
@@ -1046,12 +1056,14 @@ void CSmackerPerson::BlitAtT(SBBM &RoomBm, XY Offset) {
 
         // H25c: HD-Fassung des Bildes; Referenz ist eine 1x-Kopie des Bildes (bei Abweichung zeigt das Overlay 1x)
         if (SB_GetRenderScale() > 1 && Bitmap.pBitmap != nullptr && RoomBm.pBitmap != nullptr) {
-            if (const auto *hd = GetHdFrame()) {
-                const HdVideoClip &c = HdClips[HdClipName(Clips[HdBitmapClip].Filename)];
-                auto src = HdFrame565(Bitmap.pBitmap->GetSurface(), c.Crop);
+            SDL_Texture *tex = nullptr;
+            SLONG scale = 0;
+            SDL_Rect crop{};
+            if (GetHdFrame(tex, scale, crop)) {
+                auto src = HdFrame565(Bitmap.pBitmap->GetSurface(), crop);
                 if (src) {
                     const XY p = BitmapPos + Offset;
-                    SB_RecordHdSprite(RoomBm.pBitmap, src, hd->Tex.get(), p.x + c.Crop.x, p.y + c.Crop.y, hd->Scale);
+                    SB_RecordHdSprite(RoomBm.pBitmap, src, tex, p.x + crop.x, p.y + crop.y, scale);
                 }
             }
         }
@@ -1060,8 +1072,17 @@ void CSmackerPerson::BlitAtT(SBBM &RoomBm, XY Offset) {
 
 //--------------------------------------------------------------------------------------------
 // H25c: HD-Bilder der animierten Personen (hd/video/<clip>.smk/<NNNN>.png, Nummer wie im Export von H25a)
+// H25d: Laden im Hintergrund. Beim ersten Zeichnen einer Figur sucht ein Hintergrund-Thread alle HD-Bilder ihrer Clips
+// zusammen (Verzeichnis, crop.csv, Groesse der PNG, gleiche Dateien) und entscheidet, ob die Figur in 4x, 2x oder 1x
+// gezeigt wird (OptionHdVideoMaxMB, immer die ganze Figur gleich). Danach lesen die Threads die PNG, pruefen die Groesse,
+// berechnen die Maske fuer die Pruefung gegen das Bild im Spiel und bereiten die Farben vor (SB_PrepareHdSpriteSurface).
+// Der Hauptthread legt nur noch die Texturen an, in kleinen Portionen je Frame. Bis ein Bild bereit ist, bleibt es 1x.
+// Gleiche Dateien teilen sich eine Textur.
 //--------------------------------------------------------------------------------------------
-static const long long HdVideoMaxBytes = 512LL * 1024 * 1024; // Obergrenze je Figur; darueber bleiben weitere Bilder 1x
+static const long long HdVideoQueuedMax = 256LL * 1024 * 1024; // vorbereitet, aber noch nicht hochgeladen (alle Figuren)
+static const double HdVideoUploadMs = 3.0;                     // Hochladen je 16 ms hoechstens etwa so lange (alle Figuren)
+
+static double HdNowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
 
 static std::string HdClipName(const CString &filename) {
     std::string n = fs::path((LPCTSTR)filename).filename().string();
@@ -1070,6 +1091,605 @@ static std::string HdClipName(const CString &filename) {
     }
     return n;
 }
+
+namespace {
+std::atomic<long long> gHdVideoQueuedBytes{0};
+
+struct HdJobSet;
+
+// Ein HD-Bild (eine Datei). Die Ergebnisfelder schreibt ein Hintergrund-Thread, gelesen werden sie erst nach Done.
+struct HdJob {
+    fs::path File;
+    SDL_Rect Rect{}; // Bereich im 1x-Bild (crop.csv oder das ganze Bild)
+    std::shared_ptr<HdJobSet> Set;
+    std::atomic<bool> Wanted{false}; // wird gerade gezeigt: zuerst laden
+    std::atomic<bool> Done{false};
+    SDL_Surface *Argb{nullptr}; // vorbereitet, bis zum Hochladen
+    long long Bytes{0};
+    std::vector<bool> Mask;       // deckend je 1x-Pixel in Rect (Alpha in der Mitte des k x k-Blocks)
+    SLONG K{0};                   // Texturpixel je 1x-Pixel
+    std::shared_ptr<HdJob> DupOf; // gleiche Datei (und Groesse) schon in dieser Figur
+    std::string Error;
+    double DecodeMs{0};
+    ~HdJob() {
+        if (Argb != nullptr) {
+            gHdVideoQueuedBytes -= Bytes;
+            SDL_FreeSurface(Argb);
+        }
+    }
+};
+
+// Ein Clip der Figur. Name und Pfade setzt der Hauptthread, den Rest der Scan im Hintergrund.
+struct HdScanClip {
+    std::string Name;
+    fs::path Dir;      // hd/video/<clip>.smk
+    fs::path Smk, Flc; // Clip selbst, fuer die Groesse ohne crop.csv
+    bool Found{false};
+    SDL_Rect Crop{}; // Bereich im 1x-Bild
+    bool Cropped{false};
+    std::map<SLONG, std::shared_ptr<HdJob>> Frames;
+};
+
+// Alle Bilder einer Figur
+struct HdJobSet {
+    std::atomic<bool> Alive{true};    // false: Figur weg, nichts mehr laden
+    std::atomic<bool> Scanned{false}; // Ergebnis des Scans gueltig
+    long long CapBytes{0};
+    std::vector<HdScanClip> Clips;
+    // Ergebnis des Scans
+    SLONG Half{1};         // 2: Bilder auf halbe Groesse (2x statt 4x), damit die Figur unter die Obergrenze passt
+    bool All1x{false};     // passt auch in 2x nicht: ganze Figur 1x
+    long long Estimate{0}; // Grafikspeicher bei voller Groesse (verschiedene Bilder)
+    SLONG Files{0}, Unique{0};
+    double ScanMs{0};
+    std::vector<std::string> Log; // Meldungen fuer das Log (schreibt der Hauptthread)
+};
+
+// Groesse eines Clips (1x) aus dem Dateikopf (smk oder flc), fuer HD-Bilder ohne crop.csv
+bool HdClipSize(const fs::path &smk, const fs::path &flc, SLONG &w, SLONG &h) {
+    unsigned char head[12]{};
+    std::error_code ec;
+    const bool isSmk = fs::exists(smk, ec);
+    std::ifstream in(isSmk ? smk : flc, std::ios::binary);
+    if (!in.read(reinterpret_cast<char *>(head), sizeof(head))) {
+        return false;
+    }
+    if (isSmk && head[0] == 'S' && head[1] == 'M' && head[2] == 'K') {
+        w = SLONG(head[4] | head[5] << 8 | head[6] << 16 | head[7] << 24);
+        h = SLONG(head[8] | head[9] << 8 | head[10] << 16 | head[11] << 24);
+    } else if (!isSmk && head[5] == 0xAF && (head[4] == 0x11 || head[4] == 0x12)) {
+        w = SLONG(head[8] | head[9] << 8);
+        h = SLONG(head[10] | head[11] << 8);
+    } else {
+        return false;
+    }
+    return w > 0 && h > 0;
+}
+
+// Breite und Hoehe aus dem PNG-Kopf
+bool HdPngSize(const fs::path &file, SLONG &w, SLONG &h) {
+    unsigned char head[24]{};
+    std::ifstream in(file, std::ios::binary);
+    if (!in.read(reinterpret_cast<char *>(head), sizeof(head)) || head[1] != 'P' || head[2] != 'N' || head[3] != 'G' || head[12] != 'I') {
+        return false;
+    }
+    w = SLONG(head[16] << 24 | head[17] << 16 | head[18] << 8 | head[19]);
+    h = SLONG(head[20] << 24 | head[21] << 16 | head[22] << 8 | head[23]);
+    return w > 0 && h > 0;
+}
+
+Uint64 HdFileHash(const fs::path &file) {
+    std::ifstream in(file, std::ios::binary);
+    std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    Uint64 key = 1469598103934665603ULL; // FNV-1a
+    for (char c : data) {
+        key = (key ^ Uint8(c)) * 1099511628211ULL;
+    }
+    return key;
+}
+
+// Halbe Groesse (2x2-Mittel, Farbe nach Alpha gewichtet)
+SDL_Surface *HdHalve(SDL_Surface *rgba) {
+    SDL_Surface *out = SDL_CreateRGBSurfaceWithFormat(0, rgba->w / 2, rgba->h / 2, 32, SDL_PIXELFORMAT_RGBA32);
+    if (out == nullptr) {
+        return nullptr;
+    }
+    SDL_LockSurface(rgba);
+    SDL_LockSurface(out);
+    for (int y = 0; y < out->h; y++) {
+        const auto *r0 = static_cast<const Uint8 *>(rgba->pixels) + (2 * y) * rgba->pitch;
+        const auto *r1 = r0 + rgba->pitch;
+        auto *o = static_cast<Uint8 *>(out->pixels) + y * out->pitch;
+        for (int x = 0; x < out->w; x++) {
+            const Uint8 *p[4] = {r0 + 8 * x, r0 + 8 * x + 4, r1 + 8 * x, r1 + 8 * x + 4};
+            Uint32 a = 0, c[3] = {0, 0, 0};
+            for (const Uint8 *q : p) {
+                a += q[3];
+                for (int i = 0; i < 3; i++) {
+                    c[i] += Uint32(q[i]) * q[3];
+                }
+            }
+            for (int i = 0; i < 3; i++) {
+                o[4 * x + i] = a != 0 ? Uint8((c[i] + a / 2) / a) : 0;
+            }
+            o[4 * x + 3] = Uint8((a + 2) / 4);
+        }
+    }
+    SDL_UnlockSurface(out);
+    SDL_UnlockSurface(rgba);
+    return out;
+}
+
+class HdVideoLoader {
+  public:
+    static HdVideoLoader &Get() {
+        static HdVideoLoader loader;
+        return loader;
+    }
+    void Scan(const std::shared_ptr<HdJobSet> &set) {
+        std::lock_guard<std::mutex> l(M);
+        StartThreads();
+        Scans.push_back(set);
+        Cv.notify_all();
+    }
+    void Wake() { Cv.notify_all(); }
+    ~HdVideoLoader() {
+        {
+            std::lock_guard<std::mutex> l(M);
+            Stop = true;
+            Queue.clear();
+            Scans.clear();
+        }
+        Cv.notify_all();
+        for (auto &t : Threads) {
+            t.join();
+        }
+    }
+
+  private:
+    void StartThreads() {
+        if (Threads.empty()) {
+            IMG_Init(IMG_INIT_PNG); // einmal im Hauptthread, bevor die Threads PNGs dekodieren
+            const unsigned n = std::max(1U, std::min(3U, std::thread::hardware_concurrency() / 2));
+            for (unsigned i = 0; i < n; i++) {
+                Threads.emplace_back([this] { Run(); });
+            }
+            AT_Log_I("HD", "HD-Video: %u Hintergrund-Thread(s) zum Laden", n);
+        }
+    }
+
+    void Run() {
+        for (;;) {
+            std::shared_ptr<HdJobSet> scan;
+            std::shared_ptr<HdJob> job;
+            {
+                std::unique_lock<std::mutex> l(M);
+                for (;;) {
+                    if (Stop) {
+                        return;
+                    }
+                    if (!Scans.empty()) {
+                        scan = Scans.front();
+                        Scans.pop_front();
+                        break;
+                    }
+                    Queue.erase(std::remove_if(Queue.begin(), Queue.end(), [](const std::shared_ptr<HdJob> &j) { return !j->Set->Alive; }), Queue.end());
+                    auto it = std::find_if(Queue.begin(), Queue.end(), [](const std::shared_ptr<HdJob> &j) { return j->Wanted.load(); });
+                    if (it == Queue.end() && !Queue.empty() && gHdVideoQueuedBytes < HdVideoQueuedMax) {
+                        it = Queue.begin();
+                    }
+                    if (it != Queue.end()) {
+                        job = *it;
+                        Queue.erase(it);
+                        break;
+                    }
+                    Cv.wait_for(l, std::chrono::milliseconds(50)); // Speicher wird beim Hochladen frei, ohne Signal
+                }
+            }
+            if (scan) {
+                std::vector<std::shared_ptr<HdJob>> jobs;
+                if (scan->Alive) {
+                    DoScan(*scan, scan, jobs);
+                }
+                {
+                    std::lock_guard<std::mutex> l(M);
+                    Queue.insert(Queue.end(), jobs.begin(), jobs.end());
+                }
+                scan->Scanned = true;
+                Cv.notify_all();
+                continue;
+            }
+            Load(*job);
+            job->Done = true;
+        }
+    }
+
+    // Alle HD-Bilder der Figur zusammensuchen, Speicher schaetzen, 4x/2x/1x entscheiden, Auftraege anlegen
+    static void DoScan(HdJobSet &set, const std::shared_ptr<HdJobSet> &self, std::vector<std::shared_ptr<HdJob>> &jobs) {
+        const double t0 = HdNowMs();
+        struct Entry {
+            std::shared_ptr<HdJob> Job;
+            uintmax_t Size{0};
+            SLONG W{0}, H{0};
+        };
+        std::vector<Entry> all;
+        for (auto &c : set.Clips) {
+            std::error_code ec;
+            if (!fs::is_directory(c.Dir, ec)) {
+                continue;
+            }
+            FILE *f = fopen((c.Dir / "crop.csv").string().c_str(), "r");
+            if (f != nullptr) {
+                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                if (fscanf(f, "%d;%d;%d;%d", &x0, &y0, &x1, &y1) == 4 && x1 > x0 && y1 > y0 && x0 >= 0 && y0 >= 0) {
+                    c.Crop = SDL_Rect{x0, y0, x1 - x0, y1 - y0};
+                    c.Cropped = true;
+                }
+                fclose(f);
+            }
+            if (!c.Cropped) {
+                SLONG w = 0, h = 0;
+                if (!HdClipSize(c.Smk, c.Flc, w, h)) {
+                    set.Log.push_back(c.Dir.string() + ": Groesse des Clips unbekannt, bleibt 1x");
+                    continue;
+                }
+                c.Crop = SDL_Rect{0, 0, w, h};
+            }
+            c.Found = true;
+            for (const auto &e : fs::directory_iterator(c.Dir, ec)) {
+                const std::string file = e.path().filename().string();
+                if (file.size() != 8 || file.compare(4, 4, ".png") != 0 ||
+                    !std::all_of(file.begin(), file.begin() + 4, [](char ch) { return ch >= '0' && ch <= '9'; })) {
+                    continue;
+                }
+                auto job = std::make_shared<HdJob>();
+                job->File = e.path();
+                job->Rect = c.Crop;
+                job->Set = self;
+                c.Frames[SLONG(std::stol(file.substr(0, 4)))] = job;
+            }
+            for (auto &fr : c.Frames) { // in Abspielreihenfolge
+                Entry en;
+                en.Job = fr.second;
+                en.Size = fs::file_size(en.Job->File, ec);
+                HdPngSize(en.Job->File, en.W, en.H);
+                all.push_back(en);
+            }
+        }
+        // Gleiche Dateien: gleiche Dateigroesse und Bildgroesse, dann gleicher Inhalt
+        std::map<std::tuple<uintmax_t, SLONG, SLONG, int, int>, std::vector<Entry *>> groups;
+        for (auto &en : all) {
+            groups[std::make_tuple(en.Size, en.W, en.H, en.Job->Rect.w, en.Job->Rect.h)].push_back(&en);
+        }
+        std::map<const HdJob *, bool> dup;
+        for (auto &g : groups) {
+            if (g.second.size() < 2) {
+                continue;
+            }
+            std::map<Uint64, std::shared_ptr<HdJob>> byHash;
+            for (Entry *en : g.second) {
+                auto &first = byHash[HdFileHash(en->Job->File)];
+                if (first) {
+                    en->Job->DupOf = first;
+                    dup[en->Job.get()] = true;
+                } else {
+                    first = en->Job;
+                }
+            }
+        }
+        bool canHalve = true;
+        for (auto &en : all) {
+            set.Files++;
+            if (dup.count(en.Job.get()) == 0) {
+                set.Unique++;
+                set.Estimate += 4LL * en.W * en.H;
+                canHalve = canHalve && en.Job->Rect.w > 0 && en.W / en.Job->Rect.w >= 4;
+            }
+        }
+        if (set.Estimate > set.CapBytes) {
+            if (canHalve && set.Estimate / 4 <= set.CapBytes) {
+                set.Half = 2;
+            } else {
+                set.All1x = true;
+            }
+        }
+        for (auto &en : all) {
+            if (set.All1x || en.Job->DupOf) {
+                en.Job->Done = true; // gleiche Datei: Textur vom ersten Bild
+            } else {
+                jobs.push_back(en.Job);
+            }
+        }
+        set.ScanMs = HdNowMs() - t0;
+    }
+
+    static void Load(HdJob &job) {
+        const double t0 = HdNowMs();
+        std::ifstream in(job.File, std::ios::binary);
+        std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (data.empty()) {
+            job.Error = "nicht lesbar";
+            return;
+        }
+        SDL_Surface *png = IMG_Load_RW(SDL_RWFromConstMem(data.data(), int(data.size())), 1);
+        SDL_Surface *rgba = png != nullptr ? SDL_ConvertSurfaceFormat(png, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
+        SDL_FreeSurface(png);
+        if (rgba == nullptr) {
+            job.Error = "nicht lesbar";
+            return;
+        }
+        const SDL_Rect &r = job.Rect;
+        const int k = r.w > 0 ? rgba->w / r.w : 0;
+        if (k < 2 || rgba->w != r.w * k || rgba->h != r.h * k) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "hat %dx%d Pixel, erwartet ein Vielfaches von %dx%d", rgba->w, rgba->h, r.w, r.h);
+            job.Error = msg;
+            SDL_FreeSurface(rgba);
+            return;
+        }
+        job.K = k;
+        job.Mask.resize(size_t(r.w) * r.h);
+        SDL_LockSurface(rgba);
+        for (int y = 0; y < r.h; y++) {
+            const auto *hdRow = static_cast<const Uint8 *>(rgba->pixels) + (y * k + k / 2) * rgba->pitch;
+            for (int x = 0; x < r.w; x++) {
+                job.Mask[size_t(y) * r.w + x] = hdRow[(x * k + k / 2) * 4 + 3] >= 128;
+            }
+        }
+        SDL_UnlockSurface(rgba);
+        if (job.Set->Half == 2 && k >= 4 && k % 2 == 0) {
+            SDL_Surface *half = HdHalve(rgba);
+            SDL_FreeSurface(rgba);
+            rgba = half;
+            job.K = k / 2;
+            if (rgba == nullptr) {
+                job.Error = "nicht verkleinert";
+                return;
+            }
+        }
+        SDL_Surface *argb = SB_PrepareHdSpriteSurface(rgba);
+        SDL_FreeSurface(rgba);
+        if (argb == nullptr) {
+            job.Error = "nicht umwandelbar";
+            return;
+        }
+        job.Bytes = 4LL * argb->w * argb->h;
+        gHdVideoQueuedBytes += job.Bytes;
+        job.Argb = argb;
+        job.DecodeMs = HdNowMs() - t0;
+    }
+
+    std::mutex M;
+    std::condition_variable Cv;
+    std::deque<std::shared_ptr<HdJobSet>> Scans;
+    std::deque<std::shared_ptr<HdJob>> Queue;
+    std::vector<std::thread> Threads;
+    bool Stop{false};
+};
+
+// Hochladen: Zeitbudget fuer alle Figuren zusammen
+double gHdUploadWindow = 0, gHdUploadSpent = 0, gHdUploadAvg = 0; // Avg: gleitendes Mittel je Schritt
+} // namespace
+
+struct CSmackerPerson::HdVideoState {
+    struct Frame {
+        std::shared_ptr<HdJob> Job;
+        std::shared_ptr<SDL_Texture> Tex;
+        SLONG Scale{0};
+        SLONG State{0}; // 0 laedt, 1 Textur da, 2 gegen das Bild im Spiel geprueft, -1 bleibt 1x
+        int Rows{0};    // schon hochgeladene Zeilen (Tex angelegt, State 0)
+    };
+    struct Clip {
+        SDL_Rect Crop{}; // Bereich im 1x-Bild
+        bool Cropped{false};
+        std::map<SLONG, Frame> Frames;
+    };
+    std::map<std::string, Clip> Clips; // erst nach dem Scan
+    bool Installed{false};
+    std::vector<Frame *> Pending; // noch ohne Textur
+    std::map<const HdJob *, Frame *> ByJob;
+    std::shared_ptr<HdJobSet> Set = std::make_shared<HdJobSet>();
+    std::string Names;
+    long long Bytes{0};
+    SLONG Files{0}, Textures{0}, Shared{0}, Failed{0};
+    double Start{0}, Ready{0}; // Ready: Zeitpunkt, ab dem alle Bilder bereit waren
+    bool AllReady{false};
+    double UploadSum{0}, UploadMax{0}, DecodeSum{0}, DecodeMax{0}, MainMax{0}, BeginMs{0};
+
+    ~HdVideoState() {
+        Set->Alive = false;
+        if (Files > 0) {
+            AT_Log_I("HD",
+                     "HD-Video %s: %d Bilder, %d Texturen (%d geteilt, %d 1x), %s, %.0f MB; Laden im Hintergrund Summe %.0f ms, max %.1f ms; "
+                     "Hochladen im Hauptthread Summe %.0f ms, je Schritt max %.1f ms; Hauptthread je Zeichnen max %.1f ms (Start %.1f ms); %s",
+                     Names.c_str(), Files, Textures, Shared, Failed, Mode(), double(Bytes) / (1024 * 1024), DecodeSum, DecodeMax, UploadSum, UploadMax, MainMax,
+                     BeginMs, AllReady ? "vollstaendig geladen" : "beim Verlassen noch nicht vollstaendig geladen");
+        }
+    }
+
+    const char *Mode() const { return Set->All1x ? "1x" : Set->Half == 2 ? "2x" : "4x"; }
+
+    void Fail(Frame &f, const char *why) {
+        f.State = -1;
+        f.Tex.reset();
+        Failed++;
+        if (why != nullptr && f.Job) {
+            AT_Log_I("HD", "%s %s, bleibt 1x", f.Job->File.string().c_str(), why);
+        }
+    }
+
+    // Alle Clips der Figur (Name, Dateiname); den Rest macht der Scan im Hintergrund
+    void Begin(const std::vector<std::pair<std::string, CString>> &clips, long long capBytes) {
+        Start = HdNowMs();
+        Set->CapBytes = capBytes;
+        const fs::path root = fs::path((LPCTSTR)AppPath) / "hd" / "video";
+        std::error_code ec;
+        if (!fs::is_directory(root, ec)) {
+            Installed = true; // keine HD-Videos
+            return;
+        }
+        for (const auto &clip : clips) {
+            if (std::any_of(Set->Clips.begin(), Set->Clips.end(), [&](const HdScanClip &c) { return c.Name == clip.first; })) {
+                continue;
+            }
+            HdScanClip c;
+            c.Name = clip.first;
+            c.Dir = root / clip.first;
+            fs::path path{clip.second.c_str()};
+            fs::path rootPath{SmackerPath.c_str()};
+            c.Smk = FullFilesystemPath(path, rootPath); // wie CSmackerClip::Start, aus dem Cache (nicht threadsicher)
+            c.Flc = FullFilesystemPath(path.replace_extension("flc"), rootPath);
+            Set->Clips.push_back(c);
+        }
+        HdVideoLoader::Get().Scan(Set);
+    }
+
+    // Ergebnis des Scans uebernehmen
+    void Install() {
+        Installed = true;
+        for (const auto &line : Set->Log) {
+            AT_Log_I("HD", "%s", line.c_str());
+        }
+        SLONG nClips = 0, nCropped = 0;
+        for (auto &sc : Set->Clips) {
+            if (!sc.Found) {
+                continue;
+            }
+            nClips++;
+            nCropped += sc.Cropped ? 1 : 0;
+            Names += (Names.empty() ? "" : ", ") + sc.Name.substr(0, sc.Name.rfind('.'));
+            Clip &c = Clips[sc.Name];
+            c.Crop = sc.Crop;
+            c.Cropped = sc.Cropped;
+            for (auto &fr : sc.Frames) {
+                Frame &f = c.Frames[fr.first];
+                f.Job = fr.second;
+                ByJob[f.Job.get()] = &f;
+                Files++;
+                if (Set->All1x) {
+                    f.State = -1;
+                } else {
+                    Pending.push_back(&f);
+                }
+            }
+        }
+        if (Files == 0) {
+            return;
+        }
+        AllReady = Set->All1x;
+        AT_Log_I("HD",
+                 "HD-Video %s: %d Bilder (%d verschieden) aus %d Clips (%d zugeschnitten), Grafikspeicher %.0f MB bei voller Groesse, "
+                 "Obergrenze %lld MB: %s; Suche im Hintergrund %.0f ms",
+                 Names.c_str(), Files, Set->Unique, nClips, nCropped, double(Set->Estimate) / (1024 * 1024), Set->CapBytes / (1024 * 1024),
+                 Set->All1x       ? "ganze Figur 1x"
+                 : Set->Half == 2 ? "ganze Figur in 2x"
+                                  : "4x",
+                 Set->ScanMs);
+    }
+
+    // Fertig vorbereitete Bilder hochladen, gezeigte zuerst, im Zeitbudget
+    void Pump() {
+        if (!Installed) {
+            if (!Set->Scanned) {
+                return;
+            }
+            Install();
+        }
+        if (Pending.empty()) {
+            return;
+        }
+        const double now = HdNowMs();
+        if (now - gHdUploadWindow > 16.0) {
+            gHdUploadWindow = now;
+            gHdUploadSpent = 0;
+        }
+        for (int pass = 0; pass < 2; pass++) {
+            for (auto &fp : Pending) {
+                if (fp == nullptr) {
+                    continue;
+                }
+                Frame &f = *fp;
+                HdJob &j = *f.Job;
+                if (!j.Done || (pass == 0 && !j.Wanted)) {
+                    continue;
+                }
+                if (j.DupOf) {
+                    auto it = ByJob.find(j.DupOf.get());
+                    if (it == ByJob.end() || it->second->State == 0) {
+                        continue; // erstes Bild noch nicht da
+                    }
+                    if (it->second->Tex) {
+                        f.Tex = it->second->Tex;
+                        f.Scale = it->second->Scale;
+                        f.State = 1;
+                        Shared++;
+                    } else {
+                        Fail(f, nullptr);
+                    }
+                    fp = nullptr;
+                    continue;
+                }
+                if (!j.Error.empty() || j.Argb == nullptr) {
+                    Fail(f, j.Error.empty() ? "nicht geladen" : j.Error.c_str());
+                    fp = nullptr;
+                    continue;
+                }
+                // In Schritten: Textur anlegen, dann Streifen von etwa 512 KB, solange das Zeitbudget reicht
+                bool done = false;
+                while (!done && f.State == 0) {
+                    if (gHdUploadSpent > 0 && gHdUploadSpent + gHdUploadAvg > HdVideoUploadMs) {
+                        break; // im naechsten Frame weiter
+                    }
+                    const double t0 = HdNowMs();
+                    if (!f.Tex) {
+                        SDL_Texture *tex = SB_CreateHdSpriteTextureEmpty(j.Argb->w, j.Argb->h);
+                        if (tex == nullptr) {
+                            Fail(f, "Textur nicht angelegt");
+                            break;
+                        }
+                        f.Tex = std::shared_ptr<SDL_Texture>(tex, SB_ForgetHdTexture); // frei, wenn die Figur (der Raum) verschwindet
+                        Bytes += j.Bytes;
+                        f.Rows = 0;
+                    } else {
+                        const int rows = std::min(j.Argb->h - f.Rows, std::max(1, (1 << 19) / j.Argb->pitch));
+                        const SDL_Rect stripe{0, f.Rows, j.Argb->w, rows};
+                        SDL_UpdateTexture(f.Tex.get(), &stripe, static_cast<const Uint8 *>(j.Argb->pixels) + f.Rows * j.Argb->pitch, j.Argb->pitch);
+                        f.Rows += rows;
+                        done = f.Rows >= j.Argb->h;
+                    }
+                    const double ms = HdNowMs() - t0;
+                    gHdUploadSpent += ms;
+                    gHdUploadAvg = gHdUploadAvg > 0 ? gHdUploadAvg * 0.8 + ms * 0.2 : ms;
+                    UploadSum += ms;
+                    UploadMax = std::max(UploadMax, ms);
+                }
+                if (f.State < 0) {
+                    fp = nullptr;
+                    continue;
+                }
+                if (!done) {
+                    continue;
+                }
+                SDL_FreeSurface(j.Argb);
+                j.Argb = nullptr;
+                gHdVideoQueuedBytes -= j.Bytes;
+                DecodeSum += j.DecodeMs;
+                DecodeMax = std::max(DecodeMax, j.DecodeMs);
+                f.Scale = j.K;
+                f.State = 1;
+                Textures++;
+                fp = nullptr;
+            }
+        }
+        Pending.erase(std::remove(Pending.begin(), Pending.end(), nullptr), Pending.end());
+        if (Pending.empty() && !AllReady) {
+            AllReady = true;
+            Ready = HdNowMs();
+            AT_Log_I("HD", "HD-Video %s: %d Bilder nach %.1f s bereit (%d Texturen, %s, %.0f MB)", Names.c_str(), Files, (Ready - Start) / 1000.0, Textures,
+                     Mode(), double(Bytes) / (1024 * 1024));
+        }
+    }
+};
 
 // Das Bild (8 Bit mit Palette, Index 0 durchsichtig) als RGB565 mit Colorkey 0, so wie es in den Raum geblittet wird
 // (CalculatePalettemapper macht reines Schwarz zu (4,4,4), 0x0000 kommt also nur als Colorkey vor)
@@ -1106,94 +1726,73 @@ static std::shared_ptr<SDL_Surface> HdFrame565(SDL_Surface *frame, const SDL_Rec
     return std::shared_ptr<SDL_Surface>(out, SDL_FreeSurface);
 }
 
-const CSmackerPerson::HdVideoFrame *CSmackerPerson::GetHdFrame() {
-    if (HdBitmapClip < 0 || HdBitmapClip >= Clips.AnzEntries() || HdBitmapFrame < 0) {
-        return nullptr;
+bool CSmackerPerson::GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop) {
+    if (Sim.Options.OptionHdVideo == 0 || HdBitmapClip < 0 || HdBitmapClip >= Clips.AnzEntries() || HdBitmapFrame < 0) {
+        return false;
     }
-    const std::string name = HdClipName(Clips[HdBitmapClip].Filename);
-    HdVideoClip &c = HdClips[name];
-    if (!c.Checked) {
-        c.Checked = true;
-        const fs::path dir = fs::path((LPCTSTR)AppPath) / "hd" / "video" / name;
-        std::error_code ec;
-        if (fs::is_directory(dir, ec)) {
-            c.Dir = dir.string();
-            FILE *f = fopen((dir / "crop.csv").string().c_str(), "r");
-            if (f != nullptr) {
-                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-                if (fscanf(f, "%d;%d;%d;%d", &x0, &y0, &x1, &y1) == 4 && x1 > x0 && y1 > y0) {
-                    c.Crop = SDL_Rect{x0, y0, x1 - x0, y1 - y0};
-                }
-                fclose(f);
+    const double t0 = HdNowMs();
+    if (!Hd) {
+        Hd = std::make_shared<HdVideoState>();
+        std::vector<std::pair<std::string, CString>> clips;
+        for (SLONG i = 0; i < Clips.AnzEntries(); i++) {
+            if (Clips[i].Filename.GetLength() > 0) {
+                clips.emplace_back(HdClipName(Clips[i].Filename), Clips[i].Filename);
             }
-            AT_Log_I("HD", "HD-Bilder aus %s%s", c.Dir.c_str(), c.Crop.w > 0 ? " (zugeschnitten)" : "");
+        }
+        Hd->Begin(clips, Sim.Options.OptionHdVideoMaxMB * 1024LL * 1024);
+        Hd->BeginMs = HdNowMs() - t0;
+    }
+    HdVideoState &hd = *Hd;
+    HdVideoState::Frame *f = nullptr;
+    const HdVideoState::Clip *c = nullptr;
+    auto ci = hd.Clips.find(HdClipName(Clips[HdBitmapClip].Filename));
+    if (ci != hd.Clips.end()) {
+        c = &ci->second;
+        auto fi = ci->second.Frames.find(HdBitmapFrame);
+        if (fi != ci->second.Frames.end()) {
+            f = &fi->second;
+            if (f->State == 0 && !f->Job->Wanted.exchange(true)) {
+                HdVideoLoader::Get().Wake(); // dieses Bild zuerst
+            }
         }
     }
-    if (c.Dir.empty()) {
-        return nullptr;
-    }
-    auto it = c.Frames.find(HdBitmapFrame);
-    if (it != c.Frames.end()) {
-        return it->second.Tex ? &it->second : nullptr;
-    }
-
-    HdVideoFrame &hf = c.Frames[HdBitmapFrame];
-    char file[16];
-    snprintf(file, sizeof(file), "%04ld.png", long(HdBitmapFrame));
-    const fs::path path = fs::path(c.Dir) / file;
-    std::error_code ec;
-    SDL_Surface *frame = Bitmap.pBitmap->GetSurface();
-    if (HdFull || !fs::is_regular_file(path, ec) || frame == nullptr || frame->format->BytesPerPixel != 1) {
-        return nullptr;
-    }
-    const SDL_Rect r = c.Crop.w > 0 ? c.Crop : SDL_Rect{0, 0, frame->w, frame->h};
-    SDL_Surface *png = IMG_Load(path.string().c_str());
-    SDL_Surface *rgba = png != nullptr ? SDL_ConvertSurfaceFormat(png, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
-    SDL_FreeSurface(png);
-    if (rgba == nullptr) {
-        AT_Log_I("HD", "%s nicht lesbar", path.string().c_str());
-        return nullptr;
-    }
-    const int k = r.w > 0 ? rgba->w / r.w : 0;
-    if (k < 2 || rgba->w != r.w * k || rgba->h != r.h * k || r.x + r.w > frame->w || r.y + r.h > frame->h) {
-        AT_Log_I("HD", "%s hat %dx%d Pixel, erwartet ein Vielfaches von %dx%d; bleibt 1x", path.string().c_str(), rgba->w, rgba->h, r.w, r.h);
-        SDL_FreeSurface(rgba);
-        return nullptr;
-    }
-    // Passt die HD-Datei zu diesem Bild? Deckend in 1x <-> Alpha in der Mitte des k x k-Blocks (Rand toleriert)
-    long differ = 0;
-    SDL_LockSurface(frame);
-    SDL_LockSurface(rgba);
-    for (int y = 0; y < r.h; y++) {
-        const auto *in = static_cast<const Uint8 *>(frame->pixels) + (r.y + y) * frame->pitch + r.x;
-        const auto *hdRow = static_cast<const Uint8 *>(rgba->pixels) + (y * k + k / 2) * rgba->pitch;
-        for (int x = 0; x < r.w; x++) {
-            differ += (in[x] != 0) != (hdRow[(x * k + k / 2) * 4 + 3] >= 128) ? 1 : 0;
+    hd.Pump();
+    bool ok = false;
+    if (f != nullptr && f->State == 1) {
+        // Passt die HD-Datei zu diesem Bild? Deckend in 1x <-> Alpha in der Mitte des k x k-Blocks (Rand toleriert)
+        const SDL_Rect &r = c->Crop;
+        const HdJob &j = f->Job->DupOf ? *f->Job->DupOf : *f->Job;
+        SDL_Surface *frame = Bitmap.pBitmap->GetSurface();
+        if (frame == nullptr || frame->format->BytesPerPixel != 1 || r.x + r.w > frame->w || r.y + r.h > frame->h ||
+            (!c->Cropped && (r.w != frame->w || r.h != frame->h))) {
+            hd.Fail(*f, "passt nicht zur Groesse des Bildes im Spiel");
+        } else {
+            long differ = 0;
+            SDL_LockSurface(frame);
+            for (int y = 0; y < r.h; y++) {
+                const auto *in = static_cast<const Uint8 *>(frame->pixels) + (r.y + y) * frame->pitch + r.x;
+                for (int x = 0; x < r.w; x++) {
+                    differ += (in[x] != 0) != j.Mask[size_t(y) * r.w + x] ? 1 : 0;
+                }
+            }
+            SDL_UnlockSurface(frame);
+            if (differ * 50 > long(r.w) * r.h) {
+                char why[96];
+                snprintf(why, sizeof(why), "passt nicht zum Bild im Spiel (%ld von %d Pixeln)", differ, r.w * r.h);
+                hd.Fail(*f, why);
+            } else {
+                f->State = 2;
+            }
         }
     }
-    SDL_UnlockSurface(rgba);
-    SDL_UnlockSurface(frame);
-    if (differ * 50 > long(r.w) * r.h) {
-        AT_Log_I("HD", "%s passt nicht zum Bild im Spiel (%ld von %d Pixeln), bleibt 1x", path.string().c_str(), differ, r.w * r.h);
-        SDL_FreeSurface(rgba);
-        return nullptr;
+    if (f != nullptr && f->State == 2) {
+        tex = f->Tex.get();
+        scale = f->Scale;
+        crop = c->Cropped ? c->Crop : SDL_Rect{0, 0, 0, 0};
+        ok = true;
     }
-    const long long bytes = 4LL * rgba->w * rgba->h;
-    if (HdBytes + bytes > HdVideoMaxBytes) {
-        HdFull = true;
-        AT_Log_I("HD", "HD-Bilder: Obergrenze %lld MB fuer diese Figur erreicht, weitere Bilder bleiben 1x", HdVideoMaxBytes / (1024 * 1024));
-        SDL_FreeSurface(rgba);
-        return nullptr;
-    }
-    SDL_Texture *tex = SB_CreateHdSpriteTexture(rgba);
-    SDL_FreeSurface(rgba);
-    if (tex == nullptr) {
-        return nullptr;
-    }
-    HdBytes += bytes;
-    hf.Tex = std::shared_ptr<SDL_Texture>(tex, SB_ForgetHdTexture); // frei, wenn die Figur (der Raum) verschwindet
-    hf.Scale = k;
-    return &hf;
+    hd.MainMax = std::max(hd.MainMax, HdNowMs() - t0);
+    return ok;
 }
 
 //--------------------------------------------------------------------------------------------
