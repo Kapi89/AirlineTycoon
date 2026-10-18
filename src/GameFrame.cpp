@@ -767,6 +767,72 @@ void GameFrame::OnSysKeyDown(UINT /*nChar*/, UINT /*nRepCnt*/, UINT /*nFlags*/) 
 void GameFrame::OnSysKeyUp(UINT /*nChar*/, UINT /*nRepCnt*/, UINT /*nFlags*/) {}
 
 //--------------------------------------------------------------------------------------------
+// H26: Zeitmessung je Frame, getrennt nach Mauszeiger (OptionHdFrameStats): alle 5 s eine Zeile je Art ins Log
+//--------------------------------------------------------------------------------------------
+namespace {
+enum { FS_FRAME, FS_PAINT, FS_CURSOR, FS_RENDER, FS_PRESENT, FS_FLIP, FS_N };
+struct FrameStat {
+    SLONG N{0};
+    double Sum[FS_N]{};
+    double Max[FS_N]{};
+    SLONG Changes{0};
+    SLONG Allocs{0};
+};
+FrameStat gFrameStats[3]; // Exit, Normal, andere
+double gFrameLast = 0;
+double gFrameStatsStart = 0;
+SLONG gFrameLastChanges = 0;
+SLONG gFrameLastAllocs = 0;
+
+double FrameNowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
+
+void FrameStatsAdd(double tCursor0, double tCursor1, double tFlip0, double tFlip1) {
+    const double now = tFlip1;
+    if (gFrameLast > 0 && now - gFrameLast < 1000) { // laengere Pausen (Laden, Fenster im Hintergrund) nicht zaehlen
+        const SLONG kind = MouseLook == CURSOR_EXIT ? 0 : MouseLook == CURSOR_NORMAL ? 1 : 2;
+        const SB_PresentTimes &pt = SB_GetPresentTimes();
+        const double v[FS_N] = {now - gFrameLast, tCursor0 - gFrameLast, tCursor1 - tCursor0, pt.CursorMs, pt.PresentMs, tFlip1 - tFlip0};
+        FrameStat &s = gFrameStats[kind];
+        s.N++;
+        for (SLONG i = 0; i < FS_N; i++) {
+            s.Sum[i] += v[i];
+            s.Max[i] = std::max(s.Max[i], v[i]);
+        }
+        if (pCursor != nullptr) {
+            s.Changes += pCursor->ImageChanges - gFrameLastChanges;
+            s.Allocs += pCursor->BackgroundAllocs - gFrameLastAllocs;
+        }
+    }
+    if (pCursor != nullptr) {
+        gFrameLastChanges = pCursor->ImageChanges;
+        gFrameLastAllocs = pCursor->BackgroundAllocs;
+    }
+    gFrameLast = now;
+    if (gFrameStatsStart <= 0) {
+        gFrameStatsStart = now;
+    }
+    if (now - gFrameStatsStart < 5000) {
+        return;
+    }
+    static const char *const names[3] = {"CURSOR_EXIT", "CURSOR_NORMAL", "andere"};
+    for (SLONG k = 0; k < 3; k++) {
+        const FrameStat &s = gFrameStats[k];
+        if (s.N == 0) {
+            continue;
+        }
+        const double n = s.N;
+        AT_Log_I("HD",
+                 "Frames %s: %d, Frame %.1f/%.1f ms, Zeichnen %.1f/%.1f, Cursor setzen %.2f/%.2f, Cursor zeichnen %.2f/%.2f, "
+                 "SDL_RenderPresent %.1f/%.1f, Flip %.1f/%.1f (Mittel/Max); Bildwechsel %d, Hintergrund neu %d",
+                 names[k], s.N, s.Sum[FS_FRAME] / n, s.Max[FS_FRAME], s.Sum[FS_PAINT] / n, s.Max[FS_PAINT], s.Sum[FS_CURSOR] / n, s.Max[FS_CURSOR],
+                 s.Sum[FS_RENDER] / n, s.Max[FS_RENDER], s.Sum[FS_PRESENT] / n, s.Max[FS_PRESENT], s.Sum[FS_FLIP] / n, s.Max[FS_FLIP], s.Changes, s.Allocs);
+        gFrameStats[k] = FrameStat();
+    }
+    gFrameStatsStart = now;
+}
+} // namespace
+
+//--------------------------------------------------------------------------------------------
 // Prepares the fade-Bitmap
 //--------------------------------------------------------------------------------------------
 void GameFrame::PrepareFade() {
@@ -795,6 +861,7 @@ void GameFrame::OnPaint() {
     static SLONG LastFeet = -1;
     DWORD Time = AtGetTime();
     SLONG c = 0;
+    double tCursor0 = 0; // H26: Beginn des Mauszeiger-Blocks (OptionHdFrameStats)
 
     // Ggf. die Cursor bewegen:
     if (Time - LastTime > 30) {
@@ -930,6 +997,7 @@ void GameFrame::OnPaint() {
                 ColorFX.BlitWhiteTrans(gToolTipBm.pBitmap, &PrimaryBm.PrimaryBm, XY(px, py));
             }
 
+            tCursor0 = FrameNowMs();
             if (gUseWindowsMouse == 0) {
                 if (((MouseWait != 0) || (gMouseStartup != 0)) && (pCursor != nullptr) && nOptionsOpen == 0) {
                     if (gMouseStartup != 0) {
@@ -966,7 +1034,8 @@ void GameFrame::OnPaint() {
                         } else if (MouseLook == CURSOR_HOT) {
                             pCursor->SetImage(gCursorHotBm.pBitmap);
                         } else if (MouseLook == CURSOR_EXIT) {
-                            pCursor->SetImage(gCursorExitBms[SLONG((Sim.TickerTime / 2) % 12)].pBitmap);
+                            // H26: OptionCursorExitAnim 0 = stehender Pfeil (EXIT01) statt Animation
+                            pCursor->SetImage(gCursorExitBms[Sim.Options.OptionCursorExitAnim != 0 ? SLONG((Sim.TickerTime / 2) % 12) : 0].pBitmap);
                             MouseCursorOffset = XY(15, 12);
                         } else if (MouseLook == CURSOR_LEFT) {
                             pCursor->SetImage(gCursorLBm.pBitmap);
@@ -991,7 +1060,11 @@ void GameFrame::OnPaint() {
         }
 
         SDL_GetWindowPosition(m_hWnd, &rcWindow.x, &rcWindow.y);
+        const double tCursor1 = FrameNowMs();
         PrimaryBm.Flip(rcWindow.x, rcWindow.y, TRUE);
+        if (Sim.Options.OptionHdFrameStats != 0) {
+            FrameStatsAdd(tCursor0 > 0 ? tCursor0 : tCursor1, tCursor1, tCursor1, FrameNowMs());
+        }
     }
     if ((bActive != 0) && (Sim.bPause != 0)) {
         TXY<SLONG> rcWindow;

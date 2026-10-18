@@ -2615,7 +2615,12 @@ void SB_CPrimaryBitmap::CopyFrameTexture(SDL_Texture *tex) {
     SDL_RenderCopyF(lpDD, tex, nullptr, &full);
 }
 
+static SB_PresentTimes gPresentTimes;
+static double SB_NowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
+const SB_PresentTimes &SB_GetPresentTimes() { return gPresentTimes; }
+
 SLONG SB_CPrimaryBitmap::Present() {
+    const double tStart = SB_NowMs();
     if (lpDD != nullptr) {
         const bool border = PrepareRoomBorder();
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
@@ -2660,11 +2665,16 @@ SLONG SB_CPrimaryBitmap::Present() {
         }
 
         // Render the cursor onto the backbuffer
+        const double tCursor = SB_NowMs();
         if (Cursor != nullptr) {
             Cursor->Render(lpDD);
         }
 
+        const double tPresent = SB_NowMs();
         SDL_RenderPresent(lpDD);
+        gPresentTimes.CursorMs = tPresent - tCursor;
+        gPresentTimes.PresentMs = SB_NowMs() - tPresent;
+        gPresentTimes.TotalMs = SB_NowMs() - tStart;
         if (gHdPrimary == this && SB_GetRenderScale() > 1) {
             HdStatAllPresents++;
             HdStatPresentsNoHd += HdThisFrame ? 0 : 1;

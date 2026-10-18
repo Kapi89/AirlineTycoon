@@ -330,6 +330,12 @@ durchsichtigen Blase muss HD liegen (Bausteine der Halle), sonst zeigt das Overl
 
 ### Diagnose (HD-Ebene)
 
+- **`OptionHdFrameStats`: 1** (H26): alle 5 s je Mauszeiger-Art (`CURSOR_EXIT`, `CURSOR_NORMAL`, andere) eine Zeile
+  ins Log: Frames, Frame-Zeit, Zeichnen (vom letzten Flip bis zum Mauszeiger), Cursor setzen (`SetImage`/`MoveImage`),
+  Cursor zeichnen (`Cursor->Render`), `SDL_RenderPresent` und ganzer Flip, jeweils Mittel/Max in ms, dazu die Zahl der
+  Bildwechsel des Mauszeigers und neu angelegter Hintergruende. Standard 0.
+- **`OptionCursorExitAnim`: 0** (H26): Der Exit-Pfeil steht (Bild `EXIT01`) statt sich zu bewegen. Standard 1 (wie im
+  Original). Zum Eingrenzen von Rucklern ueber dem Ausgang eines Raums.
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
   `hd_f11_<n>_frame.png` (1x-Frame), `_ref.png` (nachgespielte Referenz), `_mask.png` (magenta = HD sichtbar,
   sonst der 1x-Pixel, der im Overlay deckend liegt), `_hd.png` (1x-Basis + HD-Ebene ohne Overlay) und

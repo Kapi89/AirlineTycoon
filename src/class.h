@@ -2462,6 +2462,8 @@ class COptions {
     SLONG OptionWidescreenRoomBorder{}; // Breitbild (H16): Raender neben Raeumen 1 = weichgezeichnet aus dem Bild, 0 = schwarz
     SLONG OptionHdPolCheck{};           // Debug (H21a): 1 = beim Start Export-PNGs der Figuren (hd_assets/original) gegen die Engine pruefen
     SLONG OptionHdVideo{1};             // H25d: 1 = animierte Personen in Raeumen in HD (hd/video), 0 = immer 1x
+    SLONG OptionHdFrameStats{0};        // H26: 1 = alle 5 s Frame-Zeiten je Mauszeiger-Art ins Log (Diagnose)
+    SLONG OptionCursorExitAnim{1};      // H26: 1 = Exit-Pfeil animiert (wie im Original), 0 = stehender Pfeil
     SLONG OptionHdVideoMaxMB{1024};     // H25d: Grafikspeicher je Figur; passt sie nicht, ganze Figur in 2x (oder 1x)
     CString OptionHdVideoExport;        // H25a: beim Start Personen-Videos exportieren ("" = aus, "alle", Raeume/Clips, z. B. "duty")
     SLONG OptionHdOverlayFilter{}; // Filter fuer das 1x-Overlay ueber HD-Hintergruenden: 0 = nearest, 1 = linear
