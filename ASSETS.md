@@ -260,8 +260,7 @@ Die Engine zeigt die Bilder der Smacker-Personen in HD, wenn es zu Clip und Bild
   Falsche Groesse: Log "erwartet ein Vielfaches", bleibt 1x.
 - Referenz ist eine 1x-Kopie des Bildes; wo der Frame nicht passt, zeigt das Overlay 1x.
 - Die Texturen gehoeren der Figur: Sie werden beim Betreten des Raums geladen (H25d, im Hintergrund) und mit dem
-  Raum freigegeben, also bei jedem Besuch neu. Je Figur hoechstens 512 MB; darueber bleiben weitere Bilder 1x (Log
-  "Obergrenze ... erreicht"), z. B. fuer die grossen Clips SO_* und De*.
+  Raum freigegeben, also bei jedem Besuch neu. Grafikspeicher je Figur: siehe `OptionHdVideoMaxMB` (H25d).
 
 ### Animierte Personen: Laden im Hintergrund (H25d)
 
@@ -269,18 +268,26 @@ Bis H25c wurde jedes HD-Bild beim ersten Zeigen im Hauptthread gelesen, dekodier
 grossen Clips (z. B. `fa1` im Frachtraum, 380x200 -> 1520x800) kostete das je Bild einige zehn Millisekunden, der
 Mauszeiger sprang. Jetzt:
 
-- Beim ersten Zeichnen einer Figur kommen alle HD-Bilder ihrer Clips in eine Warteschlange. Ein bis drei
-  Hintergrund-Threads lesen die PNG, pruefen die Groesse, berechnen die Maske fuer die Pruefung gegen das Bild im Spiel
+- Beim ersten Zeichnen einer Figur sucht ein Hintergrund-Thread alle HD-Bilder ihrer Clips zusammen (Verzeichnis,
+  `crop.csv`, Groesse der PNG aus dem Dateikopf, gleiche Dateien) und schaetzt den Grafikspeicher der Figur
+  (verschiedene Bilder). Im Hauptthread bleibt nur die Liste der Clips. Danach lesen ein bis drei Hintergrund-Threads
+  die PNG, pruefen die Groesse, berechnen die Maske fuer die Pruefung gegen das Bild im Spiel
   und bereiten die Farben vor. Das gerade gezeigte Bild kommt zuerst dran, sonst in Abspielreihenfolge.
 - Der Hauptthread legt nur noch die Texturen an und laedt sie in Streifen von etwa 512 KB hoch, etwa 3 ms je 16 ms
   (fuer alle Figuren zusammen). Bis ein Bild bereit ist, bleibt es 1x.
 - Gleiche Dateien (gleicher Inhalt, gleiche Groesse) einer Figur teilen sich eine Textur.
+- Grafikspeicher je Figur: `OptionHdVideoMaxMB` (Standard 1024, 64-16384). Passt die Figur in 4x nicht hinein, wird
+  die ganze Figur in 2x gezeigt (Bilder beim Laden auf halbe Groesse, ein Viertel des Speichers); passt sie auch so
+  nicht, bleibt die ganze Figur 1x. Innerhalb einer Figur wird nie zwischen HD und 1x gewechselt (ausser einzelnen
+  Bildern, die nicht zum Spiel passen, siehe H25c).
 - Vorbereitete, noch nicht hochgeladene Bilder belegen hoechstens 256 MB Arbeitsspeicher.
 - `OptionHdVideo` in `AT.json`: `1` (Standard) = HD, `0` = animierte Personen immer 1x (Notloesung).
 
 Log (debug.txt), je Figur:
 
-- `HD-Video fa1, fa2: 162 Bilder werden im Hintergrund geladen`
+- `HD-Video fa1, fa2: 159 Bilder (128 verschieden) aus 2 Clips (2 zugeschnitten), Grafikspeicher 640 MB bei voller
+  Groesse, Obergrenze 1024 MB: 4x; Suche im Hintergrund 40 ms` (statt `4x` auch `ganze Figur in 2x` oder
+  `ganze Figur 1x`)
 - `HD-Video ...: N Bilder nach X s bereit (T Texturen, M MB)`
 - Beim Verlassen des Raums: Bilder, Texturen (geteilt, 1x), MB, Laden im Hintergrund (Summe/Max je Bild, das ist die
   Zeit, die frueher im Hauptthread anfiel), Hochladen im Hauptthread (Summe, Max je Schritt), Hauptthread je Zeichnen

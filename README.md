@@ -96,6 +96,7 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
    | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
    | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
+   | `OptionHdVideoMaxMB` | `1024` | Grafikspeicher je animierter Person; passt sie nicht hinein, wird sie ganz in 2x gezeigt |
 
 ### macOS
 
