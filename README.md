@@ -95,6 +95,7 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    | `OptionRenderScale` | `4` | HD-Grafiken verwenden. Muss `4` sein, weil das Paket 4-fach ist (Standard `1` = aus) |
    | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
    | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
+   | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
 
 ### macOS
 

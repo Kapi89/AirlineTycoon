@@ -259,8 +259,38 @@ Die Engine zeigt die Bilder der Smacker-Personen in HD, wenn es zu Clip und Bild
   des Blocks); weichen mehr als 2 % ab (falsche Nummer, anderer Clip), bleibt es 1x (Log: "passt nicht zum Bild").
   Falsche Groesse: Log "erwartet ein Vielfaches", bleibt 1x.
 - Referenz ist eine 1x-Kopie des Bildes; wo der Frame nicht passt, zeigt das Overlay 1x.
-- Die Texturen gehoeren der Figur: Sie werden beim ersten Zeigen geladen und mit dem Raum freigegeben. Je Figur
-  hoechstens 512 MB; darueber bleiben weitere Bilder 1x (Log), z. B. fuer die grossen Clips SO_* und De*.
+- Die Texturen gehoeren der Figur: Sie werden beim Betreten des Raums geladen (H25d, im Hintergrund) und mit dem
+  Raum freigegeben, also bei jedem Besuch neu. Je Figur hoechstens 512 MB; darueber bleiben weitere Bilder 1x (Log
+  "Obergrenze ... erreicht"), z. B. fuer die grossen Clips SO_* und De*.
+
+### Animierte Personen: Laden im Hintergrund (H25d)
+
+Bis H25c wurde jedes HD-Bild beim ersten Zeigen im Hauptthread gelesen, dekodiert, aufbereitet und hochgeladen. Bei
+grossen Clips (z. B. `fa1` im Frachtraum, 380x200 -> 1520x800) kostete das je Bild einige zehn Millisekunden, der
+Mauszeiger sprang. Jetzt:
+
+- Beim ersten Zeichnen einer Figur kommen alle HD-Bilder ihrer Clips in eine Warteschlange. Ein bis drei
+  Hintergrund-Threads lesen die PNG, pruefen die Groesse, berechnen die Maske fuer die Pruefung gegen das Bild im Spiel
+  und bereiten die Farben vor. Das gerade gezeigte Bild kommt zuerst dran, sonst in Abspielreihenfolge.
+- Der Hauptthread legt nur noch die Texturen an und laedt sie in Streifen von etwa 512 KB hoch, etwa 3 ms je 16 ms
+  (fuer alle Figuren zusammen). Bis ein Bild bereit ist, bleibt es 1x.
+- Gleiche Dateien (gleicher Inhalt, gleiche Groesse) einer Figur teilen sich eine Textur.
+- Vorbereitete, noch nicht hochgeladene Bilder belegen hoechstens 256 MB Arbeitsspeicher.
+- `OptionHdVideo` in `AT.json`: `1` (Standard) = HD, `0` = animierte Personen immer 1x (Notloesung).
+
+Log (debug.txt), je Figur:
+
+- `HD-Video fa1, fa2: 162 Bilder werden im Hintergrund geladen`
+- `HD-Video ...: N Bilder nach X s bereit (T Texturen, M MB)`
+- Beim Verlassen des Raums: Bilder, Texturen (geteilt, 1x), MB, Laden im Hintergrund (Summe/Max je Bild, das ist die
+  Zeit, die frueher im Hauptthread anfiel), Hochladen im Hauptthread (Summe, Max je Schritt), Hauptthread je Zeichnen
+  (Max) und ob beim Verlassen alles geladen war.
+
+Messung (Test mit 81 Bildern 1520x800 wie `fa1`, je etwa 2 MB PNG, Software-Renderer, 4 Kerne), Zeit je Zeichnen der
+Figur im Hauptthread: vorher Mittel 23-25 ms, 80 Zeichnungen je Besuch ueber 8 ms, Hoechstwert 71-84 ms; jetzt Mittel
+0,8 ms, Hoechstwert meist 5-7 ms (einzelne Ausreisser bis 12 ms beim Anlegen einer Textur), geladen wird in
+Abspielreihenfolge, die Figur ist nach etwa 0,6 s durchgehend in HD (alle Bilder nach etwa 2,5 s). Ohne HD-Bilder:
+0,05 ms.
 
 ### Animierte Personen hochrechnen (H25b, Generator-Kategorie animationen)
 

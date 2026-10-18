@@ -221,21 +221,11 @@ class CSmackerPerson {
     void BlitAtT(SBBM &RoomBm);
     void BlitAtT(SBBM &RoomBm, XY Offset);
 
-  private: // H25c: HD-Bilder hd/video/<clip>.smk/<NNNN>.png (s-fache Groesse, Alpha), werden mit der Figur freigegeben
-    struct HdVideoFrame {
-        std::shared_ptr<SDL_Texture> Tex; // leer: keine passende HD-Datei, Bild bleibt 1x
-        SLONG Scale{0};                   // Texturpixel je 1x-Pixel
-    };
-    struct HdVideoClip {
-        bool Checked{false};
-        std::string Dir;  // leer: keine HD-Bilder fuer diesen Clip
-        SDL_Rect Crop{};  // zugeschnittene Bilder (crop.csv): Bereich im 1x-Bild, sonst das ganze Bild
-        std::map<SLONG, HdVideoFrame> Frames;
-    };
-    std::map<std::string, HdVideoClip> HdClips; // je Clip-Datei
-    SLONG HdBitmapClip{-1};                     // Clip und Bild, die gerade in Bitmap stehen
+  private: // H25c: HD-Bilder hd/video/<clip>.smk/<NNNN>.png (s-fache Groesse, Alpha), werden mit der Figur freigegeben.
+           // H25d: alle Bilder der Clips werden beim ersten Zeichnen im Hintergrund geladen, bis dahin 1x.
+    struct HdVideoState;               // SmackPrs.cpp
+    std::shared_ptr<HdVideoState> Hd;  // leer bis zum ersten Zeichnen in HD
+    SLONG HdBitmapClip{-1};            // Clip und Bild, die gerade in Bitmap stehen
     SLONG HdBitmapFrame{-1};
-    long long HdBytes{0};
-    bool HdFull{false};
-    const HdVideoFrame *GetHdFrame();
+    bool GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop);
 };

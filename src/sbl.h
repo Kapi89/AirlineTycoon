@@ -301,6 +301,12 @@ void SB_SetHdRoom(const char *room);
 // Die Textur gehoert dem Aufrufer und wird mit SB_ForgetHdTexture freigegeben. texScale: Texturpixel je Pixel von src1x
 // (0 = Render-Faktor; H23: 2-fach vergroesserte Figuren nehmen dieselbe Textur mit dem halben Faktor).
 SDL_Texture *SB_CreateHdSpriteTexture(SDL_Surface *hd);
+// H25d: dasselbe in zwei Schritten. Vorbereiten (ARGB8888, Farbe in den durchsichtigen Rand) braucht keinen Renderer und
+// darf in einem Hintergrund-Thread laufen; Anlegen der Textur nur im Hauptthread. Die Surface gehoert dem Aufrufer.
+SDL_Surface *SB_PrepareHdSpriteSurface(SDL_Surface *hd);
+SDL_Texture *SB_CreateHdSpriteTexturePrepared(SDL_Surface *argb);
+// H25d: leere Textur (ARGB8888) wie oben, zum Fuellen in Streifen mit SDL_UpdateTexture ueber mehrere Frames
+SDL_Texture *SB_CreateHdSpriteTextureEmpty(SLONG w, SLONG h);
 void SB_RecordHdSprite(class SB_CBitmapCore *target, const std::shared_ptr<SDL_Surface> &src1x, SDL_Texture *tex, SLONG x, SLONG y, SLONG texScale = 0);
 void SB_ForgetHdTexture(SDL_Texture *tex);
 
@@ -366,6 +372,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
                      bool glyph = false, SB_CBitmapCore *core = nullptr, bool flipX = false, const std::shared_ptr<SDL_Surface> &keep = nullptr,
                      SLONG texScale = 0);
     SDL_Texture *CreateHdSpriteTexture(SDL_Surface *hd); // RGBA-PNG -> Textur mit dem Alpha des PNG, ohne Cache (H21b)
+    SDL_Texture *CreateHdSpriteTexturePrepared(SDL_Surface *argb); // aus SB_PrepareHdSpriteSurface (H25d)
+    SDL_Texture *CreateHdSpriteTextureEmpty(SLONG w, SLONG h);     // zum Fuellen in Streifen (H25d)
     void RecordHdFlipped(SB_CBitmapCore *src, SB_CBitmapCore *target, SDL_Surface *flipped, SLONG x, SLONG y);
     void RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect, bool colorKey);
     void KeepHdSource(SDL_Surface *src);

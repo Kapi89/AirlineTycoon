@@ -3991,6 +3991,9 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionHdPolCheck) || OptionHdPolCheck < 0 || OptionHdPolCheck > 1) {
             OptionHdPolCheck = 0;
         }
+        if (!reg.ReadRegistryKey_l(OptionHdVideo) || OptionHdVideo < 0 || OptionHdVideo > 1) {
+            OptionHdVideo = 1;
+        }
         {
             CString type;
             if (!reg.ReadRegistryKeyEx_s(OptionHdVideoExport, "OptionHdVideoExport", &type)) {
@@ -4292,6 +4295,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionWidescreen);
     reg.WriteRegistryKey_l(OptionWidescreenRoomBorder);
     reg.WriteRegistryKey_l(OptionHdPolCheck);
+    reg.WriteRegistryKey_l(OptionHdVideo);
     reg.WriteRegistryKeyEx(OptionHdVideoExport, "OptionHdVideoExport");
     reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_b(OptionHdDebugMask);

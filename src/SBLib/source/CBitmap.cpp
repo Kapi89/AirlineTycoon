@@ -1107,19 +1107,55 @@ SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surfa
     return tex;
 }
 
+// H25d: ohne Renderer, darf in einem Hintergrund-Thread laufen
+SDL_Surface *SB_PrepareHdSpriteSurface(SDL_Surface *hd) {
+    SDL_Surface *argb = hd != nullptr ? SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0) : nullptr;
+    if (argb != nullptr) {
+        HdBleedColors(argb, 2); // Farbe in die durchsichtigen Raender ziehen (lineare Filterung)
+    }
+    return argb;
+}
+
+SDL_Texture *SB_CreateHdSpriteTexturePrepared(SDL_Surface *argb) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTexturePrepared(argb) : nullptr;
+}
+
+SDL_Texture *SB_CreateHdSpriteTextureEmpty(SLONG w, SLONG h) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTextureEmpty(w, h) : nullptr;
+}
+
+SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTextureEmpty(SLONG w, SLONG h) {
+    if (!CanUseHd() || w <= 0 || h <= 0) {
+        return nullptr;
+    }
+    SDL_Texture *tex = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
+    if (tex == nullptr) {
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", w, h, SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    HdAlphaTex.insert(tex);
+    return tex;
+}
+
 SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTexture(SDL_Surface *hd) {
     if (!CanUseHd() || hd == nullptr) {
         return nullptr;
     }
-    SDL_Surface *argb = SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0);
-    if (argb == nullptr) {
+    SDL_Surface *argb = SB_PrepareHdSpriteSurface(hd);
+    SDL_Texture *tex = CreateHdSpriteTexturePrepared(argb);
+    SDL_FreeSurface(argb);
+    return tex;
+}
+
+SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTexturePrepared(SDL_Surface *argb) {
+    if (!CanUseHd() || argb == nullptr) {
         return nullptr;
     }
-    HdBleedColors(argb, 2); // Farbe in die durchsichtigen Raender ziehen (lineare Filterung)
     SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, argb);
-    SDL_FreeSurface(argb);
     if (tex == nullptr) {
-        AT_Log("HD: Textur %dx%d nicht angelegt: %s", hd->w, hd->h, SDL_GetError());
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", argb->w, argb->h, SDL_GetError());
         return nullptr;
     }
     SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
