@@ -2302,6 +2302,7 @@ void CTakeOffApp::GameLoop(void * /*unused*/) {
                 RefreshNeccessary = FALSE;
             } else {
                 MessagePump();
+                CSmackerPerson::HdIdle(); // H27: HD-Bilder der Raum-Animationen zwischen zwei Frames hochladen
                 PrimaryBm.PrimaryBm.Present();
             }
 
