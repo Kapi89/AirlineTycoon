@@ -2617,10 +2617,15 @@ void SB_CPrimaryBitmap::CopyFrameTexture(SDL_Texture *tex) {
 
 static SB_PresentTimes gPresentTimes;
 static double SB_NowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
-const SB_PresentTimes &SB_GetPresentTimes() { return gPresentTimes; }
+SB_PresentTimes &SB_GetPresentTimes() { return gPresentTimes; }
 
 SLONG SB_CPrimaryBitmap::Present() {
     const double tStart = SB_NowMs();
+    if (gPresentTimes.LastStartMs > 0) {
+        gPresentTimes.MaxGapMs = std::max(gPresentTimes.MaxGapMs, tStart - gPresentTimes.LastStartMs);
+    }
+    gPresentTimes.LastStartMs = tStart;
+    gPresentTimes.Count++;
     if (lpDD != nullptr) {
         const bool border = PrepareRoomBorder();
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
