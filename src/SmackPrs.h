@@ -40,6 +40,9 @@
 #include <flic.h>
 
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <string>
 
 typedef XY CRepeat;
 typedef XY CPostWait;
@@ -85,6 +88,7 @@ class FlcWrapper {
     char next();
     const unsigned char *get_video();
     const flic::Colormap &get_palette();
+    long current_index(); // H25c: Index des Bildes im Puffer (0-basiert; info_all zaehlt die gelesenen Bilder)
 
   private:
     void init_decoder();
@@ -216,4 +220,19 @@ class CSmackerPerson {
     void Pump(void);
     void BlitAtT(SBBM &RoomBm);
     void BlitAtT(SBBM &RoomBm, XY Offset);
+
+  private: // H25c: HD-Bilder hd/video/<clip>.smk/<NNNN>.png (s-fache Groesse, Alpha), werden mit der Figur freigegeben.
+           // H25d: alle Bilder der Clips werden beim ersten Zeichnen im Hintergrund geladen, bis dahin 1x.
+    struct HdVideoState;               // SmackPrs.cpp
+    std::shared_ptr<HdVideoState> Hd;  // leer bis zum ersten Zeichnen in HD
+    SLONG HdBitmapClip{-1};            // Clip und Bild, die gerade in Bitmap stehen
+    SLONG HdBitmapFrame{-1};
+    bool GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop);
+    // H27: fertig geladene Figuren beim Verlassen behalten (OptionHdVideoCacheMB), beim naechsten Betreten wieder nehmen
+    static void HdKeep(std::shared_ptr<HdVideoState> &hd);
+    static std::shared_ptr<HdVideoState> HdTake(const std::string &key);
+
+  public:
+    // H27: zwischen zwei Frames weiter hochladen (Takeoff, Leerlauf der Hauptschleife)
+    static void HdIdle();
 };

@@ -4,6 +4,8 @@
 #include <SDL.h>
 #include <SDL_mouse.h>
 
+#include <algorithm>
+
 SB_CCursor::SB_CCursor(class SB_CPrimaryBitmap *primary, class SB_CBitmapCore *cursor) : Primary(primary), Cursor(cursor), Background(nullptr) {
     CreateBackground();
 }
@@ -21,7 +23,11 @@ SLONG SB_CCursor::MoveImage(SLONG x, SLONG y) {
 }
 
 SLONG SB_CCursor::SetImage(class SB_CBitmapCore *cursor) {
+    if (cursor == Cursor) {
+        return 0; // H26: gleiches Bild, nichts zu tun
+    }
     Cursor = cursor;
+    ImageChanges++;
     CreateBackground();
     return 0;
 }
@@ -44,6 +50,9 @@ SLONG SB_CCursor::Show(bool show) {
 }
 
 SLONG SB_CCursor::Render(SDL_Renderer *renderer) {
+    if (Cursor == nullptr) {
+        return -1;
+    }
     SDL_Rect dst = {Position.x, Position.y, Cursor->GetXSize(), Cursor->GetYSize()};
     if (renderer != nullptr && Cursor->GetTexture() != nullptr) {
         return SDL_RenderCopy(renderer, Cursor->GetTexture(), nullptr, &dst);
@@ -64,8 +73,9 @@ SLONG SB_CCursor::RestoreBackground(struct SDL_Surface *surf) {
         return -1;
     }
 
+    SDL_Rect src = {0, 0, Cursor->GetXSize(), Cursor->GetYSize()}; // Hintergrund kann groesser sein (H26)
     SDL_Rect rect = {Position.x, Position.y, Cursor->GetXSize(), Cursor->GetYSize()};
-    return SDL_BlitSurface(surf, nullptr, Primary->GetSurface(), &rect);
+    return SDL_BlitSurface(surf, &src, Primary->GetSurface(), &rect);
 }
 
 SLONG SB_CCursor::SaveBackground(struct SDL_Surface *surf) {
@@ -83,14 +93,19 @@ SLONG SB_CCursor::CreateBackground() {
         return -1;
     }
 
+    // H26: Hintergrund nur vergroessern; Sichern und Zurueckschreiben nehmen ohnehin nur die Groesse des Bildes
     SLONG w = Cursor->GetXSize();
     SLONG h = Cursor->GetYSize();
     if (Background == nullptr) {
-        return CreateSurface(&Background, w, h);
+        BackgroundAllocs++;
+        return CreateSurface(&Background, std::max(w, SLONG(64)), std::max(h, SLONG(64)));
     }
-    if (w != Background->w || h != Background->h) {
+    if (w > Background->w || h > Background->h) {
+        const SLONG nw = std::max(w, SLONG(Background->w));
+        const SLONG nh = std::max(h, SLONG(Background->h));
         SDL_FreeSurface(Background);
-        return CreateSurface(&Background, w, h);
+        BackgroundAllocs++;
+        return CreateSurface(&Background, nw, nh);
     }
     return 0;
 }

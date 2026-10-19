@@ -3991,6 +3991,30 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionHdPolCheck) || OptionHdPolCheck < 0 || OptionHdPolCheck > 1) {
             OptionHdPolCheck = 0;
         }
+        if (!reg.ReadRegistryKey_l(OptionHdVideo) || OptionHdVideo < 0 || OptionHdVideo > 1) {
+            OptionHdVideo = 1;
+        }
+        if (!reg.ReadRegistryKey_l(OptionHdFrameStats) || OptionHdFrameStats < 0 || OptionHdFrameStats > 1) {
+            OptionHdFrameStats = 0;
+        }
+        if (!reg.ReadRegistryKey_l(OptionCursorExitAnim) || OptionCursorExitAnim < 0 || OptionCursorExitAnim > 1) {
+            OptionCursorExitAnim = 1;
+        }
+        if (!reg.ReadRegistryKey_l(OptionHdVideoCacheMB) || OptionHdVideoCacheMB < 0 || OptionHdVideoCacheMB > 16384) {
+            OptionHdVideoCacheMB = 1536;
+        }
+        if (!reg.ReadRegistryKey_l(OptionHdVideoMaxMB) || OptionHdVideoMaxMB < 64 || OptionHdVideoMaxMB > 16384) {
+            OptionHdVideoMaxMB = 1024;
+        }
+        {
+            CString type;
+            if (!reg.ReadRegistryKeyEx_s(OptionHdVideoExport, "OptionHdVideoExport", &type)) {
+                OptionHdVideoExport = "";
+            }
+            if (OptionHdVideoExport.GetLength() > 0 || type != "fehlt") {
+                AT_Log_I("HD", "OptionHdVideoExport aus AT.json: '%s' (%s)", (LPCTSTR)OptionHdVideoExport, (LPCTSTR)type);
+            }
+        }
         if (!reg.ReadRegistryKey_l(OptionHdOverlayFilter) || OptionHdOverlayFilter < 0 || OptionHdOverlayFilter > 1) {
             OptionHdOverlayFilter = 0;
         }
@@ -4283,6 +4307,12 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionWidescreen);
     reg.WriteRegistryKey_l(OptionWidescreenRoomBorder);
     reg.WriteRegistryKey_l(OptionHdPolCheck);
+    reg.WriteRegistryKey_l(OptionHdVideo);
+    reg.WriteRegistryKey_l(OptionHdVideoMaxMB);
+    reg.WriteRegistryKey_l(OptionHdVideoCacheMB);
+    reg.WriteRegistryKey_l(OptionHdFrameStats);
+    reg.WriteRegistryKey_l(OptionCursorExitAnim);
+    reg.WriteRegistryKeyEx(OptionHdVideoExport, "OptionHdVideoExport");
     reg.WriteRegistryKey_l(OptionHdOverlayFilter);
     reg.WriteRegistryKey_b(OptionHdDebugMask);
     reg.WriteRegistryKey_b(OptionHdMissingLog);

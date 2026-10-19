@@ -20,6 +20,7 @@
 #include "global.h"
 #include "Globe.h"
 #include "helper.h"
+#include "HdVideoExport.h"
 #include "HLine.h"
 #include "Insel.h"
 #include "Intro.h"
@@ -519,6 +520,17 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
     AutoLobbyApplyOptions();
     if (gQuickTestRun == 0 && !AutoLobbyActive()) {
         Sim.SaveOptions();
+    }
+
+    // H25a: Bilder der animierten Personen in Raeumen exportieren, gleich beim Programmstart (ohne Partie);
+    // Zaehlung danach mit tools/video_count.py
+    if (Sim.Options.OptionHdVideoExport.GetLength() > 0) {
+        HdVideoExport(std::string((LPCTSTR)Sim.Options.OptionHdVideoExport));
+        // Einmalig: Option zuruecksetzen und gleich speichern. AT.json schreibt das Spiel auch beim Beenden komplett
+        // neu, Aenderungen an der Datei waehrend das Spiel laeuft gehen dabei verloren.
+        Sim.Options.OptionHdVideoExport = "";
+        Sim.SaveOptions();
+        AT_Log_I("HD", "Video-Export: OptionHdVideoExport in AT.json auf \"\" zurueckgesetzt");
     }
 
     CreateVideo();
@@ -2290,6 +2302,7 @@ void CTakeOffApp::GameLoop(void * /*unused*/) {
                 RefreshNeccessary = FALSE;
             } else {
                 MessagePump();
+                CSmackerPerson::HdIdle(); // H27: HD-Bilder der Raum-Animationen zwischen zwei Frames hochladen
                 PrimaryBm.PrimaryBm.Present();
             }
 

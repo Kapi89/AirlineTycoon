@@ -38,6 +38,8 @@ class GameFrame {
     static bool Pause(bool fPause); // AG
     void TranslatePointToGameSpace(CPoint *p) const;
     void TranslatePointToScreenSpace(SLONG &x, SLONG &y) const;
+    XY CursorScreenPos() const; // H26: Lage des Mauszeigers im Fenster aus gMousePosition und MouseCursorOffset
+    void PlaceCursor() const;   // H26: einziger Weg, den Mauszeiger zu setzen (OnMouseMove und Wechsel des Bildes)
 
     // Overrides
     // ClassWizard generated virtual function overrides

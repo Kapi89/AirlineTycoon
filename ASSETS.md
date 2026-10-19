@@ -224,6 +224,124 @@ Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden hor
 (`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
 ist nicht noetig.
 
+### Animierte Personen in Raeumen: Export und Zaehlung (H25a)
+
+Verkaeufer, Berater, Boss usw. in den Raeumen sind Smacker-Videos (`video/*.smk`, `CSmackerPerson`), keine
+GLI-Grafiken, und bleiben deshalb vorerst 1x. Fuer die Planung (H25b/c) exportiert die Engine sie Bild fuer Bild mit
+demselben Decoder wie im Spiel:
+
+1. In `AT.json` `"OptionHdVideoExport": "alle"` setzen, fuer einen Probelauf nur Raeume oder Clips, z. B. `"duty"`
+   (Anfang des Raumnamens genuegt) oder `"dukau, durede"`. Raeume: arabair, aufsicht, bank, buero, designer,
+   dutyfree, fracht, kiosk, laptop, lastmin, makler, museum, nasa, personal, reise, ricks, sabotage, security,
+   tafel, weltall, werbung, werkstat.
+2. Spiel starten; der Export laeuft gleich beim Programmstart (vor dem Hauptmenue, ohne Partie), im Log steht
+   `OptionHdVideoExport aus AT.json: '...'` und je Clip eine Zeile. Die Engine schreibt `hd_assets/original/video/<clip>.smk/<bild>.png` (RGBA, Index 0 =
+   durchsichtig, reines Schwarz wie im Spiel (4,4,4)) und je Clip `frames.csv` (Raeume, Groesse, Bounding-Box der
+   deckenden Pixel je Bild). Fehlende Clips stehen im Log. Danach setzt das Spiel die Option selbst auf `""` zurueck
+   und speichert `AT.json` gleich (Log: `OptionHdVideoExport in AT.json auf "" zurueckgesetzt`), der Export laeuft
+   also nur einmal. Hinweis: Das Spiel schreibt `AT.json` beim Beenden komplett neu; Aenderungen an der Datei,
+   waehrend das Spiel laeuft, gehen dabei verloren. `AT.json` also nur bei beendetem Spiel bearbeiten.
+3. Zaehlen: `python3 tools/video_count.py <spiel>/hd_assets/original/video` (`--clips` fuer eine Zeile je Clip). Je
+   Raum: Clips, Bilder, verschiedene Bilder (MD5), geschaetzter Grafikspeicher bei 2x und 4x, zugeschnitten auf die
+   Bounding-Box des Clips (in Klammern ohne Zuschnitt), dazu die insgesamt hochzurechnende Flaeche.
+
+Wie alle Exporte gehoert nichts davon ins Git (`hd_assets/` ist gitignored, Asset-Guard).
+
+### Animierte Personen in Raeumen in HD (H25c, Pilot Duty-Free)
+
+Die Engine zeigt die Bilder der Smacker-Personen in HD, wenn es zu Clip und Bild eine PNG gibt:
+
+- `hd/video/<clip>.smk/<NNNN>.png` neben der `AT.exe`, Nummer wie im Export (H25a, ab 0000), RGBA mit Alpha.
+- Volle Groesse: ein ganzzahliges Vielfaches k >= 2 des Clip-Bildes (bei 4x z. B. 832x1040 fuer 208x260; 2x geht auch).
+- Zugeschnitten: `crop.csv` im Clip-Ordner mit `x0;y0;x1;y1` (1x, x1/y1 exklusiv, z. B. die Bounding-Box aus
+  `frames.csv`); dann sind die PNGs ein Vielfaches dieses Ausschnitts und werden mit dem Versatz gezeichnet.
+- Beim ersten Gebrauch wird jedes HD-Bild gegen das Bild im Spiel geprueft (deckend in 1x gegen Alpha in der Mitte
+  des Blocks); weichen mehr als 2 % ab (falsche Nummer, anderer Clip), bleibt es 1x (Log: "passt nicht zum Bild").
+  Falsche Groesse: Log "erwartet ein Vielfaches", bleibt 1x.
+- Referenz ist eine 1x-Kopie des Bildes; wo der Frame nicht passt, zeigt das Overlay 1x.
+- Die Texturen gehoeren der Figur: Sie werden beim Betreten des Raums geladen (H25d, im Hintergrund) und mit dem
+  Raum freigegeben, also bei jedem Besuch neu. Grafikspeicher je Figur: siehe `OptionHdVideoMaxMB` (H25d).
+
+### Animierte Personen: Laden im Hintergrund (H25d)
+
+Bis H25c wurde jedes HD-Bild beim ersten Zeigen im Hauptthread gelesen, dekodiert, aufbereitet und hochgeladen. Bei
+grossen Clips (z. B. `fa1` im Frachtraum, 380x200 -> 1520x800) kostete das je Bild einige zehn Millisekunden, der
+Mauszeiger sprang. Jetzt:
+
+- Beim ersten Zeichnen einer Figur sucht ein Hintergrund-Thread alle HD-Bilder ihrer Clips zusammen (Verzeichnis,
+  `crop.csv`, Groesse der PNG aus dem Dateikopf, gleiche Dateien) und schaetzt den Grafikspeicher der Figur
+  (verschiedene Bilder). Im Hauptthread bleibt nur die Liste der Clips. Danach lesen ein bis drei Hintergrund-Threads
+  die PNG, pruefen die Groesse, berechnen die Maske fuer die Pruefung gegen das Bild im Spiel
+  und bereiten die Farben vor. Das gerade gezeigte Bild kommt zuerst dran, sonst in Abspielreihenfolge.
+- Der Hauptthread legt nur noch die Texturen an und laedt sie in Streifen von etwa 512 KB hoch, etwa 3 ms je 16 ms
+  (fuer alle Figuren zusammen). Bis ein Bild bereit ist, bleibt es 1x.
+- Gleiche Dateien (gleicher Inhalt, gleiche Groesse) einer Figur teilen sich eine Textur.
+- Grafikspeicher je Figur: `OptionHdVideoMaxMB` (Standard 1024, 64-16384). Passt die Figur in 4x nicht hinein, wird
+  die ganze Figur in 2x gezeigt (Bilder beim Laden auf halbe Groesse, ein Viertel des Speichers); passt sie auch so
+  nicht, bleibt die ganze Figur 1x. Innerhalb einer Figur wird nie zwischen HD und 1x gewechselt (ausser einzelnen
+  Bildern, die nicht zum Spiel passen, siehe H25c).
+- Vorbereitete, noch nicht hochgeladene Bilder belegen hoechstens 256 MB Arbeitsspeicher.
+- `OptionHdVideo` in `AT.json`: `1` (Standard) = HD, `0` = animierte Personen immer 1x (Notloesung).
+
+Log (debug.txt), je Figur:
+
+- `HD-Video fa1, fa2: 159 Bilder (128 verschieden) aus 2 Clips (2 zugeschnitten), Grafikspeicher 640 MB bei voller
+  Groesse, Obergrenze 1024 MB: 4x; Suche im Hintergrund 40 ms` (statt `4x` auch `ganze Figur in 2x` oder
+  `ganze Figur 1x`)
+- `HD-Video ...: N Bilder nach X s bereit (T Texturen, M MB)`
+- Beim Verlassen des Raums: Bilder, Texturen (geteilt, 1x), MB, Laden im Hintergrund (Summe/Max je Bild, das ist die
+  Zeit, die frueher im Hauptthread anfiel), Hochladen im Hauptthread (Summe, Max je Schritt), Hauptthread je Zeichnen
+  (Max) und ob beim Verlassen alles geladen war.
+
+Messung (Test mit 81 Bildern 1520x800 wie `fa1`, je etwa 2 MB PNG, Software-Renderer, 4 Kerne), Zeit je Zeichnen der
+Figur im Hauptthread: vorher Mittel 23-25 ms, 80 Zeichnungen je Besuch ueber 8 ms, Hoechstwert 71-84 ms; jetzt Mittel
+0,8 ms, Hoechstwert meist 5-7 ms (einzelne Ausreisser bis 12 ms beim Anlegen einer Textur), geladen wird in
+Abspielreihenfolge, die Figur ist nach etwa 0,6 s durchgehend in HD (alle Bilder nach etwa 2,5 s). Ohne HD-Bilder:
+0,05 ms.
+
+### Animierte Personen hochrechnen (H25b, Generator-Kategorie animationen)
+
+```
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum duty      # ein Raum (Anfang des Namens)
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum bank,makler
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen                  # alle exportierten Clips
+```
+
+- Eingabe ist der Engine-Export (H25a) in `hd_assets/original/video`; fehlt er, nennt der Generator die Option
+  `OptionHdVideoExport`. Die Animationen gehoeren nicht zum Standardumfang (lange Rechenzeit, auf der CPU etwa
+  17 Minuten je Million Pixel): nur mit `--nur animationen`.
+- Verfahren `figur_rgba` mit RealESRGAN_x4plus (wie die Figuren der Halle, H21b), Regel `video/*.smk/*` im Manifest.
+- Zuschnitt: Bounding-Box des Clips aus `frames.csv` (ueber alle Bilder) plus 2 px, im Bild. Ausgabe
+  `hd/video/<clip>.smk/<NNNN>.png` (zugeschnitten, 4x) und `crop.csv` (`x0;y0;x1;y1`) je Clip; `crop.csv` wird vor dem
+  Rechnen geschrieben. Leere Bilder (nichts deckend) werden nicht gerechnet und bleiben 1x.
+- Gleiche Bilder (MD5 der Export-PNG, gleicher Zuschnitt) werden nur einmal gerechnet und sonst aus dem Cache kopiert.
+- Vorhandene Ausgaben in anderer Groesse (z. B. Vollformat 832x1040 von Hand) gelten als veraltet und werden neu
+  gerechnet. Abbruch mit Strg+C, ein neuer Start setzt fort (wie bei den anderen Kategorien).
+- `--raum` vergleicht mit den Raeumen in `frames.csv` (Liste siehe H25a); `--liste` zeigt nur die offenen Bilder.
+
+### Animierte Personen: schneller bereit (H27)
+
+Bis H25d dauerte es in grossen Raeumen (Designer bis 6 s), bis alle Personen in HD liefen, und das bei jedem Besuch.
+Der groesste Teil war nicht das Dekodieren: Hochgeladen wurde nur beim Zeichnen der Figur, und Raeume zeichnen nur
+alle 50 ms (Sim-Takt). Jetzt:
+
+- Hochladen auch zwischen zwei Frames (Leerlauf der Hauptschleife, `CSmackerPerson::HdIdle`), weiter hoechstens
+  etwa 3 ms je 16 ms. Angefangene Texturen werden zuerst fertig hochgeladen, dann die gerade gezeigten Bilder.
+- Dekodieren: alle Kerne bis auf zwei (hoechstens 6 Threads) mit niedriger Prioritaet; zuerst die Bilder des Clips,
+  der gerade gezeigt wird, dann der Rest in Abspielreihenfolge.
+- Cache ueber Besuche: `OptionHdVideoCacheMB` (Standard 1536, 0 = aus). Fertig geladene Figuren behalten ihre Texturen
+  nach dem Verlassen des Raums; beim naechsten Betreten sind sie sofort in HD. Passt der Cache nicht mehr, fallen die
+  am laengsten nicht gezeigten Figuren weg, aber nie Figuren aus dem Raum, der gerade verlassen wird: Ein Raum, der
+  allein groesser ist (Designer etwa 1,3 GB), bleibt ganz im Cache, bis ein anderer Raum verlassen wird. Der Cache
+  liegt nur im Grafikspeicher, nichts auf der Platte. 1536 MB reicht fuer den groessten Raum (Designer) plus einige
+  kleine; den freien Grafikspeicher liefert SDL nicht, bei wenig Grafikspeicher (integrierte Grafik) kleiner stellen.
+- Log: `... nach x s bereit (..., Dekodieren Summe y s in n Threads, Hochladen Summe z s)`, beim Verlassen
+  `im Cache behalten (... Cache a von b MB)`, beim Betreten `aus dem Cache, sofort bereit`.
+
+Messung (Test mit 81 Bildern 1520x800 wie `fa1`, Zeichnen alle 50 ms wie im Spiel, 4 Kerne): vorher bereit nach
+4,6 s, erstes HD-Bild nach 4,5 s; jetzt bereit nach 2,3-2,6 s (durch das Dekodieren begrenzt, hier 2 Threads), erstes
+HD-Bild nach 0,3 s; erneuter Besuch sofort.
+
 ### Denkblasen in der Halle (H22)
 
 Die Denkblasen ueber den Figuren (`OptionThinkBubbles`) sind die GLI-Chunks `MOOD00` bis `MOOD42` aus
@@ -235,6 +353,17 @@ durchsichtigen Blase muss HD liegen (Bausteine der Halle), sonst zeigt das Overl
 
 ### Diagnose (HD-Ebene)
 
+- **`OptionHdFrameStats`: 1** (H26): alle 5 s je Mauszeiger-Art (`CURSOR_EXIT`, `CURSOR_NORMAL`, andere) eine Zeile
+  ins Log: Frames, Frame-Zeit, Zeichnen (vom letzten Flip bis zum Mauszeiger), Cursor setzen (`SetImage`/`MoveImage`),
+  Cursor zeichnen (`Cursor->Render`), `SDL_RenderPresent` und ganzer Flip, jeweils Mittel/Max in ms, dazu die Zahl der
+  Bildwechsel des Mauszeigers und neu angelegter Hintergruende. Dazu je 5 s: Present-Aufrufe je OnPaint (Mittel,
+  hoechstens), groesste Luecke zwischen zwei Present und wie oft die Lage, die OnPaint frueher gesetzt haette, von der
+  zuletzt gesetzten abweicht (die ersten 10 Abweichungen mit allen Werten: Raum, Look, gMousePosition, Hotspot,
+  gHallMargin, Bildbreite, Bildausschnitt und Ziel jetzt und beim letzten OnMouseMove), dazu je Mausereignis die
+  Rueckrechnung Fenster -> Spiel -> Fenster (Ereignisse, wie viele mehr als ein Spielpixel daneben liegen, groesste
+  Abweichung). Standard 0.
+- **`OptionCursorExitAnim`: 0** (H26): Der Exit-Pfeil steht (Bild `EXIT01`) statt sich zu bewegen. Standard 1 (wie im
+  Original). Zum Eingrenzen von Rucklern ueber dem Ausgang eines Raums.
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:
   `hd_f11_<n>_frame.png` (1x-Frame), `_ref.png` (nachgespielte Referenz), `_mask.png` (magenta = HD sichtbar,
   sonst der 1x-Pixel, der im Overlay deckend liegt), `_hd.png` (1x-Basis + HD-Ebene ohne Overlay) und

@@ -79,7 +79,8 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
      Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
    - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`,
-     `--nur figuren` (Personen in der Halle). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
+     `--nur figuren` (Personen in der Halle). Animierte Personen in Raeumen nur auf Wunsch und raumweise:
+     `--nur animationen --raum duty` (Export vorher im Spiel, siehe ASSETS.md). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
      Raendern (Kante per Modell, siehe ASSETS.md)
      (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
      sofort, ob alles klappt.
@@ -94,6 +95,9 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    | `OptionRenderScale` | `4` | HD-Grafiken verwenden. Muss `4` sein, weil das Paket 4-fach ist (Standard `1` = aus) |
    | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
    | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
+   | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
+   | `OptionHdVideoMaxMB` | `1024` | Grafikspeicher je animierter Person; passt sie nicht hinein, wird sie ganz in 2x gezeigt |
+   | `OptionHdVideoCacheMB` | `1536` | Grafikspeicher fuer animierte Personen verlassener Raeume; beim erneuten Betreten sofort HD (`0` = aus) |
 
 ### macOS
 
