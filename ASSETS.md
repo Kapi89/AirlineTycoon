@@ -329,9 +329,12 @@ alle 50 ms (Sim-Takt). Jetzt:
   etwa 3 ms je 16 ms. Angefangene Texturen werden zuerst fertig hochgeladen, dann die gerade gezeigten Bilder.
 - Dekodieren: alle Kerne bis auf zwei (hoechstens 6 Threads) mit niedriger Prioritaet; zuerst die Bilder des Clips,
   der gerade gezeigt wird, dann der Rest in Abspielreihenfolge.
-- Cache ueber Besuche: `OptionHdVideoCacheMB` (Standard 1024, 0 = aus). Fertig geladene Figuren behalten ihre Texturen
+- Cache ueber Besuche: `OptionHdVideoCacheMB` (Standard 1536, 0 = aus). Fertig geladene Figuren behalten ihre Texturen
   nach dem Verlassen des Raums; beim naechsten Betreten sind sie sofort in HD. Passt der Cache nicht mehr, fallen die
-  am laengsten nicht gezeigten Figuren weg. Der Cache liegt nur im Grafikspeicher, nichts auf der Platte.
+  am laengsten nicht gezeigten Figuren weg, aber nie Figuren aus dem Raum, der gerade verlassen wird: Ein Raum, der
+  allein groesser ist (Designer etwa 1,3 GB), bleibt ganz im Cache, bis ein anderer Raum verlassen wird. Der Cache
+  liegt nur im Grafikspeicher, nichts auf der Platte. 1536 MB reicht fuer den groessten Raum (Designer) plus einige
+  kleine; den freien Grafikspeicher liefert SDL nicht, bei wenig Grafikspeicher (integrierte Grafik) kleiner stellen.
 - Log: `... nach x s bereit (..., Dekodieren Summe y s in n Threads, Hochladen Summe z s)`, beim Verlassen
   `im Cache behalten (... Cache a von b MB)`, beim Betreten `aus dem Cache, sofort bereit`.
 

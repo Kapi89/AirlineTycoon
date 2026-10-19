@@ -1516,6 +1516,7 @@ struct CSmackerPerson::HdVideoState {
     double UploadSum{0}, UploadMax{0}, DecodeSum{0}, DecodeMax{0}, MainMax{0}, BeginMs{0};
     std::string Key;       // H27: Clips und Obergrenze, fuer den Cache ueber Besuche
     bool FromCache{false}; // dieser Besuch kam aus dem Cache
+    SLONG Group{0};        // H27: Raum (Besuch), in dem die Figur zuletzt gezeigt wurde
 
     // H27: alle Figuren, die gerade Bilder laden koennen (Hochladen auch zwischen zwei Frames, CSmackerPerson::HdIdle)
     static std::vector<HdVideoState *> &Live() {
@@ -1777,14 +1778,20 @@ static std::shared_ptr<SDL_Surface> HdFrame565(SDL_Surface *frame, const SDL_Rec
 //--------------------------------------------------------------------------------------------
 // H27: Cache ueber Besuche. Fertig geladene Figuren behalten ihre Texturen nach dem Verlassen des Raums, bis
 // OptionHdVideoCacheMB (alle behaltenen Figuren zusammen) erreicht ist; dann fallen die am laengsten nicht gezeigten weg.
+// Figuren desselben Raums verdraengen sich nie gegenseitig: Ein Raum, der allein groesser ist als die Obergrenze,
+// bleibt ganz im Cache, bis ein anderer Raum verlassen wird.
 //--------------------------------------------------------------------------------------------
 static std::list<std::pair<std::string, std::shared_ptr<void>>> &HdCacheList() {
     static std::list<std::pair<std::string, std::shared_ptr<void>>> list; // vorne: zuletzt verlassen
     return list;
 }
 
+static SLONG gHdInUse = 0; // Figuren, die gerade gezeigt werden
+static SLONG gHdGroup = 0; // zaehlt die Raeume: neue Gruppe, wenn vorher keine Figur gezeigt wurde
+
 CSmackerPerson::~CSmackerPerson() {
     if (Hd) {
+        gHdInUse--;
         Hd->LogLeave();
         HdKeep(Hd);
     }
@@ -1792,25 +1799,29 @@ CSmackerPerson::~CSmackerPerson() {
 
 void CSmackerPerson::HdKeep(std::shared_ptr<HdVideoState> &hd) {
     const long long cap = Sim.Options.OptionHdVideoCacheMB * 1024LL * 1024;
-    if (hd.use_count() != 1 || !hd->AllReady || hd->Files == 0 || hd->Bytes <= 0 || hd->Bytes > cap) {
-        return; // nicht fertig, nichts drin oder zu gross: wird freigegeben
+    if (cap <= 0 || hd.use_count() != 1 || !hd->AllReady || hd->Files == 0 || hd->Bytes <= 0) {
+        return; // Cache aus, nicht fertig oder nichts drin: wird freigegeben
     }
     auto &list = HdCacheList();
     list.emplace_front(hd->Key, hd);
+    auto state = [](const std::pair<std::string, std::shared_ptr<void>> &e) { return static_cast<HdVideoState *>(e.second.get()); };
     long long total = 0;
-    for (auto it = list.begin(); it != list.end();) {
-        const long long bytes = static_cast<HdVideoState *>(it->second.get())->Bytes;
-        if (total + bytes > cap) {
-            AT_Log_I("HD", "HD-Video %s: aus dem Cache entfernt (%.0f MB)", static_cast<HdVideoState *>(it->second.get())->Names.c_str(),
-                     double(bytes) / (1024 * 1024));
-            it = list.erase(it);
-        } else {
-            total += bytes;
-            ++it;
-        }
+    for (const auto &e : list) {
+        total += state(e)->Bytes;
     }
-    AT_Log_I("HD", "HD-Video %s: im Cache behalten (%.0f MB; Cache %.0f von %lld MB, %d Figuren)", hd->Names.c_str(), double(hd->Bytes) / (1024 * 1024),
-             double(total) / (1024 * 1024), cap / (1024 * 1024), SLONG(list.size()));
+    // Von hinten (am laengsten nicht gezeigt) entfernen, aber nichts aus dem Raum, der gerade verlassen wird
+    for (auto it = list.end(); total > cap && it != list.begin();) {
+        --it;
+        if (state(*it)->Group == hd->Group) {
+            continue;
+        }
+        total -= state(*it)->Bytes;
+        AT_Log_I("HD", "HD-Video %s: aus dem Cache entfernt (%.0f MB)", state(*it)->Names.c_str(), double(state(*it)->Bytes) / (1024 * 1024));
+        it = list.erase(it);
+    }
+    AT_Log_I("HD", "HD-Video %s: im Cache behalten (%.0f MB; Cache %.0f von %lld MB%s, %d Figuren)", hd->Names.c_str(), double(hd->Bytes) / (1024 * 1024),
+             double(total) / (1024 * 1024), cap / (1024 * 1024), total > cap ? ", ueber der Grenze, weil alles aus diesem Raum" : "",
+             SLONG(list.size()));
 }
 
 std::shared_ptr<CSmackerPerson::HdVideoState> CSmackerPerson::HdTake(const std::string &key) {
@@ -1860,6 +1871,10 @@ bool CSmackerPerson::GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop)
             Hd->Key = key;
             Hd->Begin(clips, cap);
         }
+        if (gHdInUse++ == 0) {
+            gHdGroup++; // erste Figur eines Raums
+        }
+        Hd->Group = gHdGroup;
         Hd->BeginMs = HdNowMs() - t0;
     }
     HdVideoState &hd = *Hd;

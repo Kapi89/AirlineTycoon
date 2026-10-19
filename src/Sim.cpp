@@ -4001,7 +4001,7 @@ void COptions::ReadOptions() {
             OptionCursorExitAnim = 1;
         }
         if (!reg.ReadRegistryKey_l(OptionHdVideoCacheMB) || OptionHdVideoCacheMB < 0 || OptionHdVideoCacheMB > 16384) {
-            OptionHdVideoCacheMB = 1024;
+            OptionHdVideoCacheMB = 1536;
         }
         if (!reg.ReadRegistryKey_l(OptionHdVideoMaxMB) || OptionHdVideoMaxMB < 64 || OptionHdVideoMaxMB > 16384) {
             OptionHdVideoMaxMB = 1024;
