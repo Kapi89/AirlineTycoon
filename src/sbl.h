@@ -248,6 +248,17 @@ class SB_CBitmapCore {
     SLONG RefCounter{0};
 };
 
+// H26: Zeiten des letzten Present in ms (Mauszeiger zeichnen, SDL_RenderPresent, ganzes Present)
+struct SB_PresentTimes {
+    double CursorMs{0};
+    double PresentMs{0};
+    double TotalMs{0};
+    SLONG Count{0};       // Present-Aufrufe seit Programmstart
+    double MaxGapMs{0};   // groesste Luecke zwischen zwei Present (der Leser setzt sie zurueck)
+    double LastStartMs{0};
+};
+SB_PresentTimes &SB_GetPresentTimes();
+
 class SB_CCursor {
   public:
     SB_CCursor(class SB_CPrimaryBitmap *, class SB_CBitmapCore * = NULL);
@@ -262,6 +273,9 @@ class SB_CCursor {
     SLONG FlipEnd();
     SLONG Show(bool);
     SLONG Render(SDL_Renderer *);
+    XY GetPosition() const { return Position; } // H26: Diagnose
+    SLONG ImageChanges{0};     // H26: Zaehler fuer die Messung (OptionHdFrameStats)
+    SLONG BackgroundAllocs{0};
 
   private:
     SLONG BlitImage(SLONG, SLONG);
@@ -301,6 +315,12 @@ void SB_SetHdRoom(const char *room);
 // Die Textur gehoert dem Aufrufer und wird mit SB_ForgetHdTexture freigegeben. texScale: Texturpixel je Pixel von src1x
 // (0 = Render-Faktor; H23: 2-fach vergroesserte Figuren nehmen dieselbe Textur mit dem halben Faktor).
 SDL_Texture *SB_CreateHdSpriteTexture(SDL_Surface *hd);
+// H25d: dasselbe in zwei Schritten. Vorbereiten (ARGB8888, Farbe in den durchsichtigen Rand) braucht keinen Renderer und
+// darf in einem Hintergrund-Thread laufen; Anlegen der Textur nur im Hauptthread. Die Surface gehoert dem Aufrufer.
+SDL_Surface *SB_PrepareHdSpriteSurface(SDL_Surface *hd);
+SDL_Texture *SB_CreateHdSpriteTexturePrepared(SDL_Surface *argb);
+// H25d: leere Textur (ARGB8888) wie oben, zum Fuellen in Streifen mit SDL_UpdateTexture ueber mehrere Frames
+SDL_Texture *SB_CreateHdSpriteTextureEmpty(SLONG w, SLONG h);
 void SB_RecordHdSprite(class SB_CBitmapCore *target, const std::shared_ptr<SDL_Surface> &src1x, SDL_Texture *tex, SLONG x, SLONG y, SLONG texScale = 0);
 void SB_ForgetHdTexture(SDL_Texture *tex);
 
@@ -337,6 +357,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void BeginView(SLONG ox, SLONG w = -1); // w: Breite des Fensters, -1 = mittig (Size.x - 2 * ox)
     void EndView();
     SLONG GetViewOffset() const { return ViewOffset; }
+    XY GetTargetSize() const { return TargetSize; }     // H26: Diagnose des Mauszeigers
+    XY GetTargetOffset() const { return TargetOffset; }
+    SLONG FrameWidth() const;    // ganze Bildbreite, auch waehrend BeginView (H26)
     XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)
     XY WindowToGame(XY p) const; // Fenster -> Bild (Mausposition)
     void SetVSync(BOOL toggle) { SDL_RenderSetVSync(lpDD, toggle); }
@@ -366,6 +389,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
                      bool glyph = false, SB_CBitmapCore *core = nullptr, bool flipX = false, const std::shared_ptr<SDL_Surface> &keep = nullptr,
                      SLONG texScale = 0);
     SDL_Texture *CreateHdSpriteTexture(SDL_Surface *hd); // RGBA-PNG -> Textur mit dem Alpha des PNG, ohne Cache (H21b)
+    SDL_Texture *CreateHdSpriteTexturePrepared(SDL_Surface *argb); // aus SB_PrepareHdSpriteSurface (H25d)
+    SDL_Texture *CreateHdSpriteTextureEmpty(SLONG w, SLONG h);     // zum Fuellen in Streifen (H25d)
     void RecordHdFlipped(SB_CBitmapCore *src, SB_CBitmapCore *target, SDL_Surface *flipped, SLONG x, SLONG y);
     void RecordHdScaled(SB_CBitmapCore *src, SB_CBitmapCore *target, const SDL_Rect &srcRect, const SDL_Rect &dstRect, bool colorKey);
     void KeepHdSource(SDL_Surface *src);

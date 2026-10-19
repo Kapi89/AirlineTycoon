@@ -45,7 +45,8 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
 
 ### Schritt fuer Schritt
 
-1. **Spiel und Version 2.0.0 installieren** wie unter [Installation](#installation) beschrieben. Die neue `AT.exe`
+1. **Spiel und die neueste Version installieren** (mindestens 2.0.0, fuer die Raum-Animationen 2.0.3) wie unter
+   [Installation](#installation) beschrieben. Die neue `AT.exe`
    (bzw. `AT`) liegt danach im Spielordner.
 2. **Python installieren** (3.9 oder neuer): Windows von [python.org](https://www.python.org/downloads/) (beim
    Installieren "Add python.exe to PATH" ankreuzen), Linux ueber die Paketverwaltung, macOS z. B. mit Homebrew.
@@ -64,7 +65,7 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    - `4x-UltraSharp.pth` von [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091,
      CC BY-NC-SA 4.0, nur nicht-kommerziell): fuer Raeume, Oberflaeche, Hallen-Bausteine und Schriften
    - `RealESRGAN_x4plus.pth` aus dem [Release v0.1.0 von Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)
-     (BSD-3-Clause): fuer die Stadtfotos und die Figuren in der Halle
+     (BSD-3-Clause): fuer die Stadtfotos, die Figuren in der Halle und die animierten Personen in Raeumen
 
    Findet der Generator ein Modell nicht, fragt er nach dem Pfad (oder `--ultrasharp DATEI`, `--x4plus DATEI`,
    `--modelle ORDNER`).
@@ -79,14 +80,24 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
      Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
    - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`,
-     `--nur figuren` (Personen in der Halle). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
+     `--nur figuren` (Personen in der Halle). Animierte Personen in Raeumen nur auf Wunsch und raumweise:
+     `--nur animationen --raum duty` (Export vorher im Spiel, siehe ASSETS.md). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
      Raendern (Kante per Modell, siehe ASSETS.md)
      (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
      sofort, ob alles klappt.
    - `--gpu` rechnet auf der Grafikkarte: CUDA (NVIDIA, Windows/Linux) oder MPS (Mac mit Apple-Chip), sonst auf der
      CPU. `--liste` zeigt nur, was zu tun ist.
    - Das Ergebnis ist reproduzierbar: gleiche Spielkopie, gleiche Modelle und CPU ergeben dieselben Bilder.
-7. **Im Spiel einschalten:** Das Spiel einmal starten und beenden, dann in der Datei `AT.json` neben der `AT.exe`
+7. **Animierte Personen in Raeumen (freiwillig, ab 2.0.3):** Verkaeufer, Berater usw. sind Videos. Sie gehoeren nicht
+   zum Standardumfang, weil das Rechnen lange dauert (auf der CPU etwa 17 Minuten je Million Pixel, alle Raeume
+   zusammen grob 100 Millionen Pixel; mit Grafikkarte viel schneller).
+   1. Export: in `AT.json` `"OptionHdVideoExport": "alle"` setzen (oder einzelne Raeume, z. B. `"duty"`), das Spiel
+      starten und beenden. Das Spiel legt die Bilder in `hd_assets/original/video` ab und setzt die Option danach
+      selbst wieder auf `""`.
+   2. Rechnen, am besten Raum fuer Raum: `python tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur
+      animationen --raum duty` (Raeume siehe [ASSETS.md](ASSETS.md#animierte-personen-in-raeumen-export-und-zaehlung-h25a)).
+      Die Bilder landen in `hd/video/`.
+8. **Im Spiel einschalten:** Das Spiel einmal starten und beenden, dann in der Datei `AT.json` neben der `AT.exe`
    eintragen bzw. aendern:
 
    | Option | Wert | Bedeutung |
@@ -94,6 +105,23 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    | `OptionRenderScale` | `4` | HD-Grafiken verwenden. Muss `4` sein, weil das Paket 4-fach ist (Standard `1` = aus) |
    | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
    | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
+   | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
+   | `OptionHdVideoMaxMB` | `1024` | Grafikspeicher je animierter Person; passt sie nicht hinein, wird sie ganz in 2x gezeigt |
+   | `OptionHdVideoCacheMB` | `1536` | Grafikspeicher fuer animierte Personen verlassener Raeume; beim erneuten Betreten sofort HD (`0` = aus). Bei wenig Grafikspeicher (integrierte Grafik) kleiner stellen |
+
+   `AT.json` nur bei beendetem Spiel bearbeiten: Das Spiel schreibt die Datei beim Beenden neu.
+
+   **Werkzeug- und Diagnose-Optionen** (normalerweise nicht noetig; Einzelheiten in [ASSETS.md](ASSETS.md)):
+
+   | Option | Standard | Wofuer |
+   |---|---|---|
+   | `OptionHdVideoExport` | `""` | Werkzeug: beim Start die Raum-Animationen fuer den Generator exportieren (`"alle"` oder Raeume), setzt sich danach selbst zurueck |
+   | `OptionHdOverlayFilter` | `0` | Feineinstellung: Filter der 1x-Reste ueber HD-Hintergruenden (`0` scharf, `1` weich) |
+   | `OptionHdMissingLog` | `false` | Diagnose: jede Grafik ohne HD-Bild einmal ins Log |
+   | `OptionHdFrameStats` | `0` | Diagnose: Frame-Zeiten und Lage des Mauszeigers alle 5 s ins Log |
+   | `OptionCursorExitAnim` | `1` | Diagnose: `0` = Exit-Pfeil steht still (zum Eingrenzen von Rucklern) |
+   | `OptionHdDebugMask` | `false` | Diagnose: alle 5 s Masken-Bilder nach `hd_debug/` |
+   | `OptionHdPolCheck` | `0` | Diagnose: beim Start die exportierten Hallen-Figuren gegen die Engine pruefen |
 
 ### macOS
 
@@ -140,6 +168,14 @@ git submodule update --init
 You can see the instructions to build and run the project in [BUILDING.md](BUILDING.md).
 
 ## Changes
+
+### HD graphics and widescreen (2.0.0 - 2.0.3)
+* Optional 4x HD graphics, generated locally from your own copy of the game with `tools/hd_generate.py` (see the German
+  guide above; nothing copyrighted is distributed): rooms, UI, fonts, city photos, airport hall bricks, people in the
+  hall, thought bubbles and, since 2.0.3, the animated people in rooms
+* Widescreen: the airport hall and rooms with a status bar use the full 16:10 / 16:9 width; soft borders next to rooms
+* 2.0.3: animated people in rooms in HD (loaded in the background, cached across visits, whole figure in 2x if it does
+  not fit the memory limit), fixed mouse cursor jumps and shifted click areas in widescreen rooms
 
 ### General
 * Now runnable on Linux (including support for FLC animations found in some versions)

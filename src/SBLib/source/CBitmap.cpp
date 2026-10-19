@@ -1107,19 +1107,55 @@ SDL_Texture *SB_CPrimaryBitmap::GetHdTextureFor(SDL_Surface *hd, const SDL_Surfa
     return tex;
 }
 
+// H25d: ohne Renderer, darf in einem Hintergrund-Thread laufen
+SDL_Surface *SB_PrepareHdSpriteSurface(SDL_Surface *hd) {
+    SDL_Surface *argb = hd != nullptr ? SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0) : nullptr;
+    if (argb != nullptr) {
+        HdBleedColors(argb, 2); // Farbe in die durchsichtigen Raender ziehen (lineare Filterung)
+    }
+    return argb;
+}
+
+SDL_Texture *SB_CreateHdSpriteTexturePrepared(SDL_Surface *argb) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTexturePrepared(argb) : nullptr;
+}
+
+SDL_Texture *SB_CreateHdSpriteTextureEmpty(SLONG w, SLONG h) {
+    return gHdPrimary != nullptr && SB_GetRenderScale() > 1 ? gHdPrimary->CreateHdSpriteTextureEmpty(w, h) : nullptr;
+}
+
+SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTextureEmpty(SLONG w, SLONG h) {
+    if (!CanUseHd() || w <= 0 || h <= 0) {
+        return nullptr;
+    }
+    SDL_Texture *tex = SDL_CreateTexture(lpDD, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
+    if (tex == nullptr) {
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", w, h, SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    HdAlphaTex.insert(tex);
+    return tex;
+}
+
 SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTexture(SDL_Surface *hd) {
     if (!CanUseHd() || hd == nullptr) {
         return nullptr;
     }
-    SDL_Surface *argb = SDL_ConvertSurfaceFormat(hd, SDL_PIXELFORMAT_ARGB8888, 0);
-    if (argb == nullptr) {
+    SDL_Surface *argb = SB_PrepareHdSpriteSurface(hd);
+    SDL_Texture *tex = CreateHdSpriteTexturePrepared(argb);
+    SDL_FreeSurface(argb);
+    return tex;
+}
+
+SDL_Texture *SB_CPrimaryBitmap::CreateHdSpriteTexturePrepared(SDL_Surface *argb) {
+    if (!CanUseHd() || argb == nullptr) {
         return nullptr;
     }
-    HdBleedColors(argb, 2); // Farbe in die durchsichtigen Raender ziehen (lineare Filterung)
     SDL_Texture *tex = SDL_CreateTextureFromSurface(lpDD, argb);
-    SDL_FreeSurface(argb);
     if (tex == nullptr) {
-        AT_Log("HD: Textur %dx%d nicht angelegt: %s", hd->w, hd->h, SDL_GetError());
+        AT_Log("HD: Textur %dx%d nicht angelegt: %s", argb->w, argb->h, SDL_GetError());
         return nullptr;
     }
     SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
@@ -2579,7 +2615,17 @@ void SB_CPrimaryBitmap::CopyFrameTexture(SDL_Texture *tex) {
     SDL_RenderCopyF(lpDD, tex, nullptr, &full);
 }
 
+static SB_PresentTimes gPresentTimes;
+static double SB_NowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
+SB_PresentTimes &SB_GetPresentTimes() { return gPresentTimes; }
+
 SLONG SB_CPrimaryBitmap::Present() {
+    const double tStart = SB_NowMs();
+    if (gPresentTimes.LastStartMs > 0) {
+        gPresentTimes.MaxGapMs = std::max(gPresentTimes.MaxGapMs, tStart - gPresentTimes.LastStartMs);
+    }
+    gPresentTimes.LastStartMs = tStart;
+    gPresentTimes.Count++;
     if (lpDD != nullptr) {
         const bool border = PrepareRoomBorder();
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
@@ -2624,11 +2670,16 @@ SLONG SB_CPrimaryBitmap::Present() {
         }
 
         // Render the cursor onto the backbuffer
+        const double tCursor = SB_NowMs();
         if (Cursor != nullptr) {
             Cursor->Render(lpDD);
         }
 
+        const double tPresent = SB_NowMs();
         SDL_RenderPresent(lpDD);
+        gPresentTimes.CursorMs = tPresent - tCursor;
+        gPresentTimes.PresentMs = SB_NowMs() - tPresent;
+        gPresentTimes.TotalMs = SB_NowMs() - tStart;
         if (gHdPrimary == this && SB_GetRenderScale() > 1) {
             HdStatAllPresents++;
             HdStatPresentsNoHd += HdThisFrame ? 0 : 1;
@@ -2671,18 +2722,23 @@ void SB_CPrimaryBitmap::UpdateFrameTarget() {
     TargetOffset = XY(CanvasOffset.x + (CanvasSize.x - w) / 2, CanvasOffset.y);
 }
 
+// H26: immer mit der ganzen Bildbreite, nie mit der eines Ausschnitts (BeginView). Raeume verarbeiten Mausereignisse
+// auch waehrend ihr Ausschnitt aktiv ist (MessagePump am Ende von CStdRaum::PostPaint).
+SLONG SB_CPrimaryBitmap::FrameWidth() const { return ViewSurface != nullptr ? FullSizeX : Size.x; }
+
 XY SB_CPrimaryBitmap::GameToWindow(XY p) const {
-    if (Size.x <= 0 || Size.y <= 0) {
+    const SLONG w = FrameWidth();
+    if (w <= 0 || Size.y <= 0) {
         return p;
     }
-    return XY(TargetOffset.x + SLONG(float(p.x) * float(TargetSize.x) / float(Size.x)), TargetOffset.y + SLONG(float(p.y) * float(TargetSize.y) / float(Size.y)));
+    return XY(TargetOffset.x + SLONG(float(p.x) * float(TargetSize.x) / float(w)), TargetOffset.y + SLONG(float(p.y) * float(TargetSize.y) / float(Size.y)));
 }
 
 XY SB_CPrimaryBitmap::WindowToGame(XY p) const {
     if (TargetSize.x <= 0 || TargetSize.y <= 0) {
         return p;
     }
-    return XY(SLONG(float(p.x - TargetOffset.x) * float(Size.x) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
+    return XY(SLONG(float(p.x - TargetOffset.x) * float(FrameWidth()) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
 }
 
 void SB_CPrimaryBitmap::ShiftHdEntries(SLONG dx) {
