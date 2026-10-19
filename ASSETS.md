@@ -27,6 +27,7 @@ Kurz:
 pip install -r tools/hdgen/requirements.txt
 python3 tools/hd_generate.py /pfad/zum/spiel                 # alles
 python3 tools/hd_generate.py /pfad/zum/spiel --nur schriften   # oder stadtfotos, ui, raeume, bausteine, figuren
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum duty   # Raum-Animationen (Export vorher im Spiel, H25a)
 ```
 
 Lizenz in einem Satz: Spiel selbst kaufen, das erzeugte Paket nur privat nutzen und nicht weitergeben,
@@ -353,6 +354,10 @@ durchsichtigen Blase muss HD liegen (Bausteine der Halle), sonst zeigt das Overl
 
 ### Diagnose (HD-Ebene)
 
+Diese Optionen dienen nur der Fehlersuche und sind standardmaessig aus; im normalen Spiel braucht man sie nicht.
+`OptionHdVideoExport` ist ein Werkzeug fuer den Generator (H25a), `OptionHdMissingLog` steht unter
+[Welche HD-Grafiken fehlen noch?](#welche-hd-grafiken-fehlen-noch).
+
 - **`OptionHdFrameStats`: 1** (H26): alle 5 s je Mauszeiger-Art (`CURSOR_EXIT`, `CURSOR_NORMAL`, andere) eine Zeile
   ins Log: Frames, Frame-Zeit, Zeichnen (vom letzten Flip bis zum Mauszeiger), Cursor setzen (`SetImage`/`MoveImage`),
   Cursor zeichnen (`Cursor->Render`), `SDL_RenderPresent` und ganzer Flip, jeweils Mittel/Max in ms, dazu die Zahl der
@@ -404,6 +409,8 @@ ohne HD-PNG gezeichnet werden, einmal eine Zeile im Log, z. B.
 ```
 HD fehlt (Raum kiosk.gli): hd/room/kiosk.gli/ZEITUNG.png  120x80 -> 480x320
 ```
+
+Bekannt: Kurven, die das Spiel live zeichnet (Kerosinpreis bei Arab Air, Aktienkurse in der Bank), bleiben 1x.
 
 Der Raum ist der, in dem die Grafik zuerst auftauchte. Grafiken, die das Spiel nachtraeglich bemalt, stehen mit
 dem Hinweis "HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt" in der Liste; sie bleiben 1x.
