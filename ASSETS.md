@@ -319,6 +319,29 @@ python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen                  
   gerechnet. Abbruch mit Strg+C, ein neuer Start setzt fort (wie bei den anderen Kategorien).
 - `--raum` vergleicht mit den Raeumen in `frames.csv` (Liste siehe H25a); `--liste` zeigt nur die offenen Bilder.
 
+### Animierte Personen: schneller bereit (H27)
+
+Bis H25d dauerte es in grossen Raeumen (Designer bis 6 s), bis alle Personen in HD liefen, und das bei jedem Besuch.
+Der groesste Teil war nicht das Dekodieren: Hochgeladen wurde nur beim Zeichnen der Figur, und Raeume zeichnen nur
+alle 50 ms (Sim-Takt). Jetzt:
+
+- Hochladen auch zwischen zwei Frames (Leerlauf der Hauptschleife, `CSmackerPerson::HdIdle`), weiter hoechstens
+  etwa 3 ms je 16 ms. Angefangene Texturen werden zuerst fertig hochgeladen, dann die gerade gezeigten Bilder.
+- Dekodieren: alle Kerne bis auf zwei (hoechstens 6 Threads) mit niedriger Prioritaet; zuerst die Bilder des Clips,
+  der gerade gezeigt wird, dann der Rest in Abspielreihenfolge.
+- Cache ueber Besuche: `OptionHdVideoCacheMB` (Standard 1536, 0 = aus). Fertig geladene Figuren behalten ihre Texturen
+  nach dem Verlassen des Raums; beim naechsten Betreten sind sie sofort in HD. Passt der Cache nicht mehr, fallen die
+  am laengsten nicht gezeigten Figuren weg, aber nie Figuren aus dem Raum, der gerade verlassen wird: Ein Raum, der
+  allein groesser ist (Designer etwa 1,3 GB), bleibt ganz im Cache, bis ein anderer Raum verlassen wird. Der Cache
+  liegt nur im Grafikspeicher, nichts auf der Platte. 1536 MB reicht fuer den groessten Raum (Designer) plus einige
+  kleine; den freien Grafikspeicher liefert SDL nicht, bei wenig Grafikspeicher (integrierte Grafik) kleiner stellen.
+- Log: `... nach x s bereit (..., Dekodieren Summe y s in n Threads, Hochladen Summe z s)`, beim Verlassen
+  `im Cache behalten (... Cache a von b MB)`, beim Betreten `aus dem Cache, sofort bereit`.
+
+Messung (Test mit 81 Bildern 1520x800 wie `fa1`, Zeichnen alle 50 ms wie im Spiel, 4 Kerne): vorher bereit nach
+4,6 s, erstes HD-Bild nach 4,5 s; jetzt bereit nach 2,3-2,6 s (durch das Dekodieren begrenzt, hier 2 Threads), erstes
+HD-Bild nach 0,3 s; erneuter Besuch sofort.
+
 ### Denkblasen in der Halle (H22)
 
 Die Denkblasen ueber den Figuren (`OptionThinkBubbles`) sind die GLI-Chunks `MOOD00` bis `MOOD42` aus

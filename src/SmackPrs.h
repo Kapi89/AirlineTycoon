@@ -228,4 +228,11 @@ class CSmackerPerson {
     SLONG HdBitmapClip{-1};            // Clip und Bild, die gerade in Bitmap stehen
     SLONG HdBitmapFrame{-1};
     bool GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop);
+    // H27: fertig geladene Figuren beim Verlassen behalten (OptionHdVideoCacheMB), beim naechsten Betreten wieder nehmen
+    static void HdKeep(std::shared_ptr<HdVideoState> &hd);
+    static std::shared_ptr<HdVideoState> HdTake(const std::string &key);
+
+  public:
+    // H27: zwischen zwei Frames weiter hochladen (Takeoff, Leerlauf der Hauptschleife)
+    static void HdIdle();
 };

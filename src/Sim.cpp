@@ -4000,6 +4000,9 @@ void COptions::ReadOptions() {
         if (!reg.ReadRegistryKey_l(OptionCursorExitAnim) || OptionCursorExitAnim < 0 || OptionCursorExitAnim > 1) {
             OptionCursorExitAnim = 1;
         }
+        if (!reg.ReadRegistryKey_l(OptionHdVideoCacheMB) || OptionHdVideoCacheMB < 0 || OptionHdVideoCacheMB > 16384) {
+            OptionHdVideoCacheMB = 1536;
+        }
         if (!reg.ReadRegistryKey_l(OptionHdVideoMaxMB) || OptionHdVideoMaxMB < 64 || OptionHdVideoMaxMB > 16384) {
             OptionHdVideoMaxMB = 1024;
         }
@@ -4306,6 +4309,7 @@ void COptions::WriteOptions() {
     reg.WriteRegistryKey_l(OptionHdPolCheck);
     reg.WriteRegistryKey_l(OptionHdVideo);
     reg.WriteRegistryKey_l(OptionHdVideoMaxMB);
+    reg.WriteRegistryKey_l(OptionHdVideoCacheMB);
     reg.WriteRegistryKey_l(OptionHdFrameStats);
     reg.WriteRegistryKey_l(OptionCursorExitAnim);
     reg.WriteRegistryKeyEx(OptionHdVideoExport, "OptionHdVideoExport");

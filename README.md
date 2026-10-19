@@ -97,6 +97,7 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
    | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
    | `OptionHdVideoMaxMB` | `1024` | Grafikspeicher je animierter Person; passt sie nicht hinein, wird sie ganz in 2x gezeigt |
+   | `OptionHdVideoCacheMB` | `1536` | Grafikspeicher fuer animierte Personen verlassener Raeume; beim erneuten Betreten sofort HD (`0` = aus) |
 
 ### macOS
 

@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
+#include <list>
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -526,7 +527,6 @@ CSmackerPerson::CSmackerPerson() {
 //--------------------------------------------------------------------------------------------
 // Destruktor:
 //--------------------------------------------------------------------------------------------
-CSmackerPerson::~CSmackerPerson() = default;
 
 bool CSmackerPerson::clipExists(SLONG clip) const {
     if (clip < 0 || clip >= Clips.AnzEntries()) {
@@ -1104,6 +1104,7 @@ struct HdJob {
     std::shared_ptr<HdJobSet> Set;
     std::atomic<bool> Wanted{false}; // wird gerade gezeigt: zuerst laden
     std::atomic<bool> Done{false};
+    SLONG ClipIndex{0};         // H27: Clip in HdJobSet::Clips (sichtbarer Clip zuerst)
     SDL_Surface *Argb{nullptr}; // vorbereitet, bis zum Hochladen
     long long Bytes{0};
     std::vector<bool> Mask;       // deckend je 1x-Pixel in Rect (Alpha in der Mitte des k x k-Blocks)
@@ -1134,6 +1135,7 @@ struct HdScanClip {
 struct HdJobSet {
     std::atomic<bool> Alive{true};    // false: Figur weg, nichts mehr laden
     std::atomic<bool> Scanned{false}; // Ergebnis des Scans gueltig
+    std::atomic<int> HotClip{-1};     // H27: Clip, der gerade gezeigt wird; seine Bilder zuerst laden
     long long CapBytes{0};
     std::vector<HdScanClip> Clips;
     // Ergebnis des Scans
@@ -1250,10 +1252,16 @@ class HdVideoLoader {
     void StartThreads() {
         if (Threads.empty()) {
             IMG_Init(IMG_INIT_PNG); // einmal im Hauptthread, bevor die Threads PNGs dekodieren
-            const unsigned n = std::max(1U, std::min(3U, std::thread::hardware_concurrency() / 2));
+            // H27: alle Kerne bis auf zwei (Hauptthread, Treiber), hoechstens 6, mit niedriger Prioritaet
+            const unsigned hw = std::thread::hardware_concurrency();
+            const unsigned n = std::max(1U, std::min(6U, hw > 2 ? hw - 2 : 1U));
             for (unsigned i = 0; i < n; i++) {
-                Threads.emplace_back([this] { Run(); });
+                Threads.emplace_back([this] {
+                    SDL_SetThreadPriority(SDL_THREAD_PRIORITY_LOW);
+                    Run();
+                });
             }
+            NThreads = n;
             AT_Log_I("HD", "HD-Video: %u Hintergrund-Thread(s) zum Laden", n);
         }
     }
@@ -1276,7 +1284,11 @@ class HdVideoLoader {
                     Queue.erase(std::remove_if(Queue.begin(), Queue.end(), [](const std::shared_ptr<HdJob> &j) { return !j->Set->Alive; }), Queue.end());
                     auto it = std::find_if(Queue.begin(), Queue.end(), [](const std::shared_ptr<HdJob> &j) { return j->Wanted.load(); });
                     if (it == Queue.end() && !Queue.empty() && gHdVideoQueuedBytes < HdVideoQueuedMax) {
-                        it = Queue.begin();
+                        // H27: zuerst die Bilder des Clips, der gerade gezeigt wird, dann der Rest in Abspielreihenfolge
+                        it = std::find_if(Queue.begin(), Queue.end(), [](const std::shared_ptr<HdJob> &j) { return j->ClipIndex == j->Set->HotClip.load(); });
+                        if (it == Queue.end()) {
+                            it = Queue.begin();
+                        }
                     }
                     if (it != Queue.end()) {
                         job = *it;
@@ -1346,6 +1358,7 @@ class HdVideoLoader {
                 job->File = e.path();
                 job->Rect = c.Crop;
                 job->Set = self;
+                job->ClipIndex = SLONG(&c - set.Clips.data());
                 c.Frames[SLONG(std::stol(file.substr(0, 4)))] = job;
             }
             for (auto &fr : c.Frames) { // in Abspielreihenfolge
@@ -1464,6 +1477,11 @@ class HdVideoLoader {
     std::deque<std::shared_ptr<HdJobSet>> Scans;
     std::deque<std::shared_ptr<HdJob>> Queue;
     std::vector<std::thread> Threads;
+
+  public:
+    unsigned NThreads{0};
+
+  private:
     bool Stop{false};
 };
 
@@ -1482,6 +1500,7 @@ struct CSmackerPerson::HdVideoState {
     struct Clip {
         SDL_Rect Crop{}; // Bereich im 1x-Bild
         bool Cropped{false};
+        SLONG Index{0}; // in Set->Clips (H27)
         std::map<SLONG, Frame> Frames;
     };
     std::map<std::string, Clip> Clips; // erst nach dem Scan
@@ -1495,16 +1514,42 @@ struct CSmackerPerson::HdVideoState {
     double Start{0}, Ready{0}; // Ready: Zeitpunkt, ab dem alle Bilder bereit waren
     bool AllReady{false};
     double UploadSum{0}, UploadMax{0}, DecodeSum{0}, DecodeMax{0}, MainMax{0}, BeginMs{0};
+    std::string Key;       // H27: Clips und Obergrenze, fuer den Cache ueber Besuche
+    bool FromCache{false}; // dieser Besuch kam aus dem Cache
+    SLONG Group{0};        // H27: Raum (Besuch), in dem die Figur zuletzt gezeigt wurde
 
+    // H27: alle Figuren, die gerade Bilder laden koennen (Hochladen auch zwischen zwei Frames, CSmackerPerson::HdIdle)
+    static std::vector<HdVideoState *> &Live() {
+        static std::vector<HdVideoState *> live;
+        return live;
+    }
+    HdVideoState() { Live().push_back(this); }
     ~HdVideoState() {
         Set->Alive = false;
+        auto &live = Live();
+        live.erase(std::remove(live.begin(), live.end(), this), live.end());
+    }
+    HdVideoState(const HdVideoState &) = delete;
+    HdVideoState &operator=(const HdVideoState &) = delete;
+
+    // Beim Verlassen des Raums (Figur verschwindet)
+    void LogLeave() const {
         if (Files > 0) {
             AT_Log_I("HD",
-                     "HD-Video %s: %d Bilder, %d Texturen (%d geteilt, %d 1x), %s, %.0f MB; Laden im Hintergrund Summe %.0f ms, max %.1f ms; "
+                     "HD-Video %s: %d Bilder, %d Texturen (%d geteilt, %d 1x), %s, %.0f MB%s; Laden im Hintergrund Summe %.0f ms, max %.1f ms; "
                      "Hochladen im Hauptthread Summe %.0f ms, je Schritt max %.1f ms; Hauptthread je Zeichnen max %.1f ms (Start %.1f ms); %s",
-                     Names.c_str(), Files, Textures, Shared, Failed, Mode(), double(Bytes) / (1024 * 1024), DecodeSum, DecodeMax, UploadSum, UploadMax, MainMax,
-                     BeginMs, AllReady ? "vollstaendig geladen" : "beim Verlassen noch nicht vollstaendig geladen");
+                     Names.c_str(), Files, Textures, Shared, Failed, Mode(), double(Bytes) / (1024 * 1024), FromCache ? " aus dem Cache" : "", DecodeSum,
+                     DecodeMax, UploadSum, UploadMax, MainMax, BeginMs, AllReady ? "vollstaendig geladen" : "beim Verlassen noch nicht vollstaendig geladen");
         }
+    }
+
+    // Erneut betreten, Texturen aus dem Cache: nur die Zahlen dieses Besuchs zuruecksetzen
+    void Revisit() {
+        FromCache = true;
+        Start = HdNowMs();
+        UploadSum = UploadMax = DecodeSum = DecodeMax = MainMax = BeginMs = 0;
+        AT_Log_I("HD", "HD-Video %s: aus dem Cache, sofort bereit (%d Bilder, %d Texturen, %s, %.0f MB)", Names.c_str(), Files, Textures, Mode(),
+                 double(Bytes) / (1024 * 1024));
     }
 
     const char *Mode() const { return Set->All1x ? "1x" : Set->Half == 2 ? "2x" : "4x"; }
@@ -1561,6 +1606,7 @@ struct CSmackerPerson::HdVideoState {
             Clip &c = Clips[sc.Name];
             c.Crop = sc.Crop;
             c.Cropped = sc.Cropped;
+            c.Index = SLONG(&sc - Set->Clips.data());
             for (auto &fr : sc.Frames) {
                 Frame &f = c.Frames[fr.first];
                 f.Job = fr.second;
@@ -1603,14 +1649,15 @@ struct CSmackerPerson::HdVideoState {
             gHdUploadWindow = now;
             gHdUploadSpent = 0;
         }
-        for (int pass = 0; pass < 2; pass++) {
+        // H27: zuerst angefangene Texturen fertig hochladen (nicht viele halb), dann gezeigte Bilder, dann der Rest
+        for (int pass = 0; pass < 3; pass++) {
             for (auto &fp : Pending) {
                 if (fp == nullptr) {
                     continue;
                 }
                 Frame &f = *fp;
                 HdJob &j = *f.Job;
-                if (!j.Done || (pass == 0 && !j.Wanted)) {
+                if (!j.Done || (pass == 0 && !f.Tex) || (pass == 1 && !j.Wanted)) {
                     continue;
                 }
                 if (j.DupOf) {
@@ -1685,8 +1732,10 @@ struct CSmackerPerson::HdVideoState {
         if (Pending.empty() && !AllReady) {
             AllReady = true;
             Ready = HdNowMs();
-            AT_Log_I("HD", "HD-Video %s: %d Bilder nach %.1f s bereit (%d Texturen, %s, %.0f MB)", Names.c_str(), Files, (Ready - Start) / 1000.0, Textures,
-                     Mode(), double(Bytes) / (1024 * 1024));
+            AT_Log_I("HD",
+                     "HD-Video %s: %d Bilder nach %.1f s bereit (%d Texturen, %s, %.0f MB; Dekodieren Summe %.1f s in %u Threads, Hochladen Summe %.2f s)",
+                     Names.c_str(), Files, (Ready - Start) / 1000.0, Textures, Mode(), double(Bytes) / (1024 * 1024), DecodeSum / 1000.0,
+                     HdVideoLoader::Get().NThreads, UploadSum / 1000.0);
         }
     }
 };
@@ -1726,20 +1775,106 @@ static std::shared_ptr<SDL_Surface> HdFrame565(SDL_Surface *frame, const SDL_Rec
     return std::shared_ptr<SDL_Surface>(out, SDL_FreeSurface);
 }
 
+//--------------------------------------------------------------------------------------------
+// H27: Cache ueber Besuche. Fertig geladene Figuren behalten ihre Texturen nach dem Verlassen des Raums, bis
+// OptionHdVideoCacheMB (alle behaltenen Figuren zusammen) erreicht ist; dann fallen die am laengsten nicht gezeigten weg.
+// Figuren desselben Raums verdraengen sich nie gegenseitig: Ein Raum, der allein groesser ist als die Obergrenze,
+// bleibt ganz im Cache, bis ein anderer Raum verlassen wird.
+//--------------------------------------------------------------------------------------------
+static std::list<std::pair<std::string, std::shared_ptr<void>>> &HdCacheList() {
+    static std::list<std::pair<std::string, std::shared_ptr<void>>> list; // vorne: zuletzt verlassen
+    return list;
+}
+
+static SLONG gHdInUse = 0; // Figuren, die gerade gezeigt werden
+static SLONG gHdGroup = 0; // zaehlt die Raeume: neue Gruppe, wenn vorher keine Figur gezeigt wurde
+
+CSmackerPerson::~CSmackerPerson() {
+    if (Hd) {
+        gHdInUse--;
+        Hd->LogLeave();
+        HdKeep(Hd);
+    }
+}
+
+void CSmackerPerson::HdKeep(std::shared_ptr<HdVideoState> &hd) {
+    const long long cap = Sim.Options.OptionHdVideoCacheMB * 1024LL * 1024;
+    if (cap <= 0 || hd.use_count() != 1 || !hd->AllReady || hd->Files == 0 || hd->Bytes <= 0) {
+        return; // Cache aus, nicht fertig oder nichts drin: wird freigegeben
+    }
+    auto &list = HdCacheList();
+    list.emplace_front(hd->Key, hd);
+    auto state = [](const std::pair<std::string, std::shared_ptr<void>> &e) { return static_cast<HdVideoState *>(e.second.get()); };
+    long long total = 0;
+    for (const auto &e : list) {
+        total += state(e)->Bytes;
+    }
+    // Von hinten (am laengsten nicht gezeigt) entfernen, aber nichts aus dem Raum, der gerade verlassen wird
+    for (auto it = list.end(); total > cap && it != list.begin();) {
+        --it;
+        if (state(*it)->Group == hd->Group) {
+            continue;
+        }
+        total -= state(*it)->Bytes;
+        AT_Log_I("HD", "HD-Video %s: aus dem Cache entfernt (%.0f MB)", state(*it)->Names.c_str(), double(state(*it)->Bytes) / (1024 * 1024));
+        it = list.erase(it);
+    }
+    AT_Log_I("HD", "HD-Video %s: im Cache behalten (%.0f MB; Cache %.0f von %lld MB%s, %d Figuren)", hd->Names.c_str(), double(hd->Bytes) / (1024 * 1024),
+             double(total) / (1024 * 1024), cap / (1024 * 1024), total > cap ? ", ueber der Grenze, weil alles aus diesem Raum" : "",
+             SLONG(list.size()));
+}
+
+std::shared_ptr<CSmackerPerson::HdVideoState> CSmackerPerson::HdTake(const std::string &key) {
+    auto &list = HdCacheList();
+    for (auto it = list.begin(); it != list.end(); ++it) {
+        if (it->first == key) {
+            auto hd = std::static_pointer_cast<HdVideoState>(it->second);
+            list.erase(it);
+            return hd;
+        }
+    }
+    return nullptr;
+}
+
+void CSmackerPerson::HdIdle() {
+    if (Sim.Options.OptionHdVideo == 0 || SB_GetRenderScale() <= 1) {
+        return;
+    }
+    const auto live = HdVideoState::Live(); // Kopie: Pump legt keine Figuren an oder weg
+    for (HdVideoState *hd : live) {
+        if (!hd->AllReady) {
+            hd->Pump();
+        }
+    }
+}
+
 bool CSmackerPerson::GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop) {
     if (Sim.Options.OptionHdVideo == 0 || HdBitmapClip < 0 || HdBitmapClip >= Clips.AnzEntries() || HdBitmapFrame < 0) {
         return false;
     }
     const double t0 = HdNowMs();
     if (!Hd) {
-        Hd = std::make_shared<HdVideoState>();
         std::vector<std::pair<std::string, CString>> clips;
+        const long long cap = Sim.Options.OptionHdVideoMaxMB * 1024LL * 1024;
+        std::string key = std::to_string(cap);
         for (SLONG i = 0; i < Clips.AnzEntries(); i++) {
             if (Clips[i].Filename.GetLength() > 0) {
                 clips.emplace_back(HdClipName(Clips[i].Filename), Clips[i].Filename);
+                key += "|" + clips.back().first;
             }
         }
-        Hd->Begin(clips, Sim.Options.OptionHdVideoMaxMB * 1024LL * 1024);
+        Hd = HdTake(key); // H27: schon einmal fertig geladen?
+        if (Hd) {
+            Hd->Revisit();
+        } else {
+            Hd = std::make_shared<HdVideoState>();
+            Hd->Key = key;
+            Hd->Begin(clips, cap);
+        }
+        if (gHdInUse++ == 0) {
+            gHdGroup++; // erste Figur eines Raums
+        }
+        Hd->Group = gHdGroup;
         Hd->BeginMs = HdNowMs() - t0;
     }
     HdVideoState &hd = *Hd;
@@ -1748,6 +1883,7 @@ bool CSmackerPerson::GetHdFrame(SDL_Texture *&tex, SLONG &scale, SDL_Rect &crop)
     auto ci = hd.Clips.find(HdClipName(Clips[HdBitmapClip].Filename));
     if (ci != hd.Clips.end()) {
         c = &ci->second;
+        hd.Set->HotClip = ci->second.Index; // H27: Bilder dieses Clips zuerst laden
         auto fi = ci->second.Frames.find(HdBitmapFrame);
         if (fi != ci->second.Frames.end()) {
             f = &fi->second;
