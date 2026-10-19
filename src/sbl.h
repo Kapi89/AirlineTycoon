@@ -359,6 +359,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SLONG GetViewOffset() const { return ViewOffset; }
     XY GetTargetSize() const { return TargetSize; }     // H26: Diagnose des Mauszeigers
     XY GetTargetOffset() const { return TargetOffset; }
+    SLONG FrameWidth() const;    // ganze Bildbreite, auch waehrend BeginView (H26)
     XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)
     XY WindowToGame(XY p) const; // Fenster -> Bild (Mausposition)
     void SetVSync(BOOL toggle) { SDL_RenderSetVSync(lpDD, toggle); }

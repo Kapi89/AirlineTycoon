@@ -336,7 +336,9 @@ durchsichtigen Blase muss HD liegen (Bausteine der Halle), sonst zeigt das Overl
   Bildwechsel des Mauszeigers und neu angelegter Hintergruende. Dazu je 5 s: Present-Aufrufe je OnPaint (Mittel,
   hoechstens), groesste Luecke zwischen zwei Present und wie oft die Lage, die OnPaint frueher gesetzt haette, von der
   zuletzt gesetzten abweicht (die ersten 10 Abweichungen mit allen Werten: Raum, Look, gMousePosition, Hotspot,
-  gHallMargin, Bildbreite, Bildausschnitt und Ziel jetzt und beim letzten OnMouseMove). Standard 0.
+  gHallMargin, Bildbreite, Bildausschnitt und Ziel jetzt und beim letzten OnMouseMove), dazu je Mausereignis die
+  Rueckrechnung Fenster -> Spiel -> Fenster (Ereignisse, wie viele mehr als ein Spielpixel daneben liegen, groesste
+  Abweichung). Standard 0.
 - **`OptionCursorExitAnim`: 0** (H26): Der Exit-Pfeil steht (Bild `EXIT01`) statt sich zu bewegen. Standard 1 (wie im
   Original). Zum Eingrenzen von Rucklern ueber dem Ausgang eines Raums.
 - **F11** (bei `OptionRenderScale` > 1): Der naechste Frame wird nach `hd_debug/` gespeichert:

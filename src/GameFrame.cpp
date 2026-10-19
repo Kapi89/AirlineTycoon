@@ -42,6 +42,11 @@ SLONG OptionsShortcut = -1;
 
 XY MouseCursorOffset = XY(0, 0);
 
+// H26: Pruefung Fenster -> Spiel -> Fenster je Mausereignis (OptionHdFrameStats), Ausgabe mit den Frame-Zeiten
+static SLONG gCursorRoundTrips = 0;
+static SLONG gCursorRoundTripErrors = 0;
+static SLONG gCursorRoundTripMax = 0;
+
 SLONG CBench::GetMissing() {
     return (SLONG(GameTime) - SLONG(BlitTime) - SLONG(FXTime) - SLONG(InitTime) - SLONG(DiskTime) - SLONG(TextTime) - SLONG(ClearTime) - SLONG(SortTime) -
             SLONG(WalkTime) - SLONG(AdminTime) - SLONG(WaitTime) - SLONG(FlipTime) - SLONG(KITime) - SLONG(MiscTime1) - SLONG(MiscTime2));
@@ -597,6 +602,24 @@ void GameFrame::ProcessEvent(const SDL_Event &event) const {
     case SDL_MOUSEMOTION: {
         CPoint pos = CPoint(event.motion.x, event.motion.y);
         TranslatePointToGameSpace(&pos);
+        if (Sim.Options.OptionHdFrameStats != 0) {
+            // Zurueck ins Fenster: hoechstens ein Spielpixel daneben (Abrunden), egal ob ein Ausschnitt aktiv ist
+            SLONG wx = pos.x;
+            SLONG wy = pos.y;
+            TranslatePointToScreenSpace(wx, wy);
+            const XY ts = PrimaryBm.PrimaryBm.GetTargetSize();
+            const SLONG fw = PrimaryBm.PrimaryBm.FrameWidth();
+            const SLONG fh = PrimaryBm.PrimaryBm.GetYSize();
+            const SLONG tolX = fw > 0 ? (ts.x + fw - 1) / fw : 1;
+            const SLONG tolY = fh > 0 ? (ts.y + fh - 1) / fh : 1;
+            const SLONG dx = abs(wx - event.motion.x);
+            const SLONG dy = abs(wy - event.motion.y);
+            gCursorRoundTrips++;
+            if (dx > tolX || dy > tolY) {
+                gCursorRoundTripErrors++;
+                gCursorRoundTripMax = max(gCursorRoundTripMax, max(dx, dy));
+            }
+        }
         FrameWnd->OnMouseMove(0, pos);
     } break;
     case SDL_TEXTINPUT:
@@ -843,8 +866,10 @@ void FrameStatsAdd(double tCursor0, double tCursor1, double tFlip0, double tFlip
     SB_PresentTimes &pt = SB_GetPresentTimes();
     AT_Log_I("HD",
              "Present: je OnPaint im Mittel %.2f, hoechstens %d; groesste Luecke zwischen zwei Present %.1f ms; "
-             "Mauszeiger in OnPaint anders als zuletzt gesetzt: %d Mal",
-             gPaints > 0 ? double(gPresentsPerPaintSum) / gPaints : 0.0, gPresentsPerPaintMax, pt.MaxGapMs, gCursorDiffs);
+             "Mauszeiger in OnPaint anders als zuletzt gesetzt: %d Mal; Fenster->Spiel->Fenster: %d Ereignisse, %d daneben (max %d px)",
+             gPaints > 0 ? double(gPresentsPerPaintSum) / gPaints : 0.0, gPresentsPerPaintMax, pt.MaxGapMs, gCursorDiffs, gCursorRoundTrips,
+             gCursorRoundTripErrors, gCursorRoundTripMax);
+    gCursorRoundTrips = gCursorRoundTripErrors = gCursorRoundTripMax = 0;
     pt.MaxGapMs = 0;
     gPresentsPerPaintMax = gPresentsPerPaintSum = gPaints = 0;
     gCursorDiffs = gCursorDiffLogged = 0;
