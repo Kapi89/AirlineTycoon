@@ -42,6 +42,11 @@ SLONG OptionsShortcut = -1;
 
 XY MouseCursorOffset = XY(0, 0);
 
+// H26: Pruefung Fenster -> Spiel -> Fenster je Mausereignis (OptionHdFrameStats), Ausgabe mit den Frame-Zeiten
+static SLONG gCursorRoundTrips = 0;
+static SLONG gCursorRoundTripErrors = 0;
+static SLONG gCursorRoundTripMax = 0;
+
 SLONG CBench::GetMissing() {
     return (SLONG(GameTime) - SLONG(BlitTime) - SLONG(FXTime) - SLONG(InitTime) - SLONG(DiskTime) - SLONG(TextTime) - SLONG(ClearTime) - SLONG(SortTime) -
             SLONG(WalkTime) - SLONG(AdminTime) - SLONG(WaitTime) - SLONG(FlipTime) - SLONG(KITime) - SLONG(MiscTime1) - SLONG(MiscTime2));
@@ -597,6 +602,24 @@ void GameFrame::ProcessEvent(const SDL_Event &event) const {
     case SDL_MOUSEMOTION: {
         CPoint pos = CPoint(event.motion.x, event.motion.y);
         TranslatePointToGameSpace(&pos);
+        if (Sim.Options.OptionHdFrameStats != 0) {
+            // Zurueck ins Fenster: hoechstens ein Spielpixel daneben (Abrunden), egal ob ein Ausschnitt aktiv ist
+            SLONG wx = pos.x;
+            SLONG wy = pos.y;
+            TranslatePointToScreenSpace(wx, wy);
+            const XY ts = PrimaryBm.PrimaryBm.GetTargetSize();
+            const SLONG fw = PrimaryBm.PrimaryBm.FrameWidth();
+            const SLONG fh = PrimaryBm.PrimaryBm.GetYSize();
+            const SLONG tolX = fw > 0 ? (ts.x + fw - 1) / fw : 1;
+            const SLONG tolY = fh > 0 ? (ts.y + fh - 1) / fh : 1;
+            const SLONG dx = abs(wx - event.motion.x);
+            const SLONG dy = abs(wy - event.motion.y);
+            gCursorRoundTrips++;
+            if (dx > tolX || dy > tolY) {
+                gCursorRoundTripErrors++;
+                gCursorRoundTripMax = max(gCursorRoundTripMax, max(dx, dy));
+            }
+        }
         FrameWnd->OnMouseMove(0, pos);
     } break;
     case SDL_TEXTINPUT:
@@ -767,6 +790,108 @@ void GameFrame::OnSysKeyDown(UINT /*nChar*/, UINT /*nRepCnt*/, UINT /*nFlags*/) 
 void GameFrame::OnSysKeyUp(UINT /*nChar*/, UINT /*nRepCnt*/, UINT /*nFlags*/) {}
 
 //--------------------------------------------------------------------------------------------
+// H26: Zeitmessung je Frame, getrennt nach Mauszeiger (OptionHdFrameStats): alle 5 s eine Zeile je Art ins Log
+//--------------------------------------------------------------------------------------------
+namespace {
+enum { FS_FRAME, FS_PAINT, FS_CURSOR, FS_RENDER, FS_PRESENT, FS_FLIP, FS_N };
+struct FrameStat {
+    SLONG N{0};
+    double Sum[FS_N]{};
+    double Max[FS_N]{};
+    SLONG Changes{0};
+    SLONG Allocs{0};
+};
+FrameStat gFrameStats[3]; // Exit, Normal, andere
+double gFrameLast = 0;
+SLONG gPresentsLast = 0; // Present-Zaehler beim letzten OnPaint
+SLONG gPresentsPerPaintMax = 0;
+SLONG gPresentsPerPaintSum = 0;
+SLONG gPaints = 0;
+
+// Diagnose Mauszeiger: Zustand beim letzten OnMouseMove und Abweichungen in OnPaint
+struct CursorEvent {
+    XY Window;       // Punkt des Ereignisses (Spiel, ohne +2) wieder im Fenster
+    XY Game;         // gMousePosition danach
+    XY Placed;       // gesetzte Lage des Mauszeigers
+    SLONG FrameW{0}; // Bildbreite (PrimaryBm) beim Ereignis
+    SLONG ViewOffset{0};
+    XY TargetSize, TargetOffset;
+    SLONG HallMargin{0};
+};
+CursorEvent gCursorEvent;
+SLONG gCursorDiffs = 0;
+SLONG gCursorDiffLogged = 0;
+double gFrameStatsStart = 0;
+SLONG gFrameLastChanges = 0;
+SLONG gFrameLastAllocs = 0;
+
+double FrameNowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
+
+void FrameStatsAdd(double tCursor0, double tCursor1, double tFlip0, double tFlip1) {
+    const double now = tFlip1;
+    {
+        const SLONG count = SB_GetPresentTimes().Count;
+        const SLONG d = count - gPresentsLast;
+        gPresentsLast = count;
+        gPresentsPerPaintSum += d;
+        gPresentsPerPaintMax = std::max(gPresentsPerPaintMax, d);
+        gPaints++;
+    }
+    if (gFrameLast > 0 && now - gFrameLast < 1000) { // laengere Pausen (Laden, Fenster im Hintergrund) nicht zaehlen
+        const SLONG kind = MouseLook == CURSOR_EXIT ? 0 : MouseLook == CURSOR_NORMAL ? 1 : 2;
+        const SB_PresentTimes &pt = SB_GetPresentTimes();
+        const double v[FS_N] = {now - gFrameLast, tCursor0 - gFrameLast, tCursor1 - tCursor0, pt.CursorMs, pt.PresentMs, tFlip1 - tFlip0};
+        FrameStat &s = gFrameStats[kind];
+        s.N++;
+        for (SLONG i = 0; i < FS_N; i++) {
+            s.Sum[i] += v[i];
+            s.Max[i] = std::max(s.Max[i], v[i]);
+        }
+        if (pCursor != nullptr) {
+            s.Changes += pCursor->ImageChanges - gFrameLastChanges;
+            s.Allocs += pCursor->BackgroundAllocs - gFrameLastAllocs;
+        }
+    }
+    if (pCursor != nullptr) {
+        gFrameLastChanges = pCursor->ImageChanges;
+        gFrameLastAllocs = pCursor->BackgroundAllocs;
+    }
+    gFrameLast = now;
+    if (gFrameStatsStart <= 0) {
+        gFrameStatsStart = now;
+    }
+    if (now - gFrameStatsStart < 5000) {
+        return;
+    }
+    SB_PresentTimes &pt = SB_GetPresentTimes();
+    AT_Log_I("HD",
+             "Present: je OnPaint im Mittel %.2f, hoechstens %d; groesste Luecke zwischen zwei Present %.1f ms; "
+             "Mauszeiger in OnPaint anders als zuletzt gesetzt: %d Mal; Fenster->Spiel->Fenster: %d Ereignisse, %d daneben (max %d px)",
+             gPaints > 0 ? double(gPresentsPerPaintSum) / gPaints : 0.0, gPresentsPerPaintMax, pt.MaxGapMs, gCursorDiffs, gCursorRoundTrips,
+             gCursorRoundTripErrors, gCursorRoundTripMax);
+    gCursorRoundTrips = gCursorRoundTripErrors = gCursorRoundTripMax = 0;
+    pt.MaxGapMs = 0;
+    gPresentsPerPaintMax = gPresentsPerPaintSum = gPaints = 0;
+    gCursorDiffs = gCursorDiffLogged = 0;
+    static const char *const names[3] = {"CURSOR_EXIT", "CURSOR_NORMAL", "andere"};
+    for (SLONG k = 0; k < 3; k++) {
+        const FrameStat &s = gFrameStats[k];
+        if (s.N == 0) {
+            continue;
+        }
+        const double n = s.N;
+        AT_Log_I("HD",
+                 "Frames %s: %d, Frame %.1f/%.1f ms, Zeichnen %.1f/%.1f, Cursor setzen %.2f/%.2f, Cursor zeichnen %.2f/%.2f, "
+                 "SDL_RenderPresent %.1f/%.1f, Flip %.1f/%.1f (Mittel/Max); Bildwechsel %d, Hintergrund neu %d",
+                 names[k], s.N, s.Sum[FS_FRAME] / n, s.Max[FS_FRAME], s.Sum[FS_PAINT] / n, s.Max[FS_PAINT], s.Sum[FS_CURSOR] / n, s.Max[FS_CURSOR],
+                 s.Sum[FS_RENDER] / n, s.Max[FS_RENDER], s.Sum[FS_PRESENT] / n, s.Max[FS_PRESENT], s.Sum[FS_FLIP] / n, s.Max[FS_FLIP], s.Changes, s.Allocs);
+        gFrameStats[k] = FrameStat();
+    }
+    gFrameStatsStart = now;
+}
+} // namespace
+
+//--------------------------------------------------------------------------------------------
 // Prepares the fade-Bitmap
 //--------------------------------------------------------------------------------------------
 void GameFrame::PrepareFade() {
@@ -795,6 +920,7 @@ void GameFrame::OnPaint() {
     static SLONG LastFeet = -1;
     DWORD Time = AtGetTime();
     SLONG c = 0;
+    double tCursor0 = 0; // H26: Beginn des Mauszeiger-Blocks (OptionHdFrameStats)
 
     // Ggf. die Cursor bewegen:
     if (Time - LastTime > 30) {
@@ -930,6 +1056,7 @@ void GameFrame::OnPaint() {
                 ColorFX.BlitWhiteTrans(gToolTipBm.pBitmap, &PrimaryBm.PrimaryBm, XY(px, py));
             }
 
+            tCursor0 = FrameNowMs();
             if (gUseWindowsMouse == 0) {
                 if (((MouseWait != 0) || (gMouseStartup != 0)) && (pCursor != nullptr) && nOptionsOpen == 0) {
                     if (gMouseStartup != 0) {
@@ -938,10 +1065,36 @@ void GameFrame::OnPaint() {
                         MouseCursorOffset = XY(16, 16);
                         pCursor->SetImage(gCursorSandBm.pBitmap);
                         LastMouseLook = 99;
+                        PlaceCursor();
                     }
                 } else {
-                    if ((MouseLook != LastMouseLook || LastFeet != gShowCursorFeet || MouseLook == CURSOR_EXIT || gShowCursorFeet != -1) &&
-                        (pCursor != nullptr)) {
+                    if (Sim.Options.OptionHdFrameStats != 0 && pCursor != nullptr) {
+                        // H26: Diagnose: weicht die Lage, die OnPaint frueher gesetzt haette, von der zuletzt gesetzten ab?
+                        const XY want = CursorScreenPos();
+                        const XY have = pCursor->GetPosition();
+                        if (want.x != have.x || want.y != have.y) {
+                            gCursorDiffs++;
+                            if (gCursorDiffLogged++ < 10) {
+                                const CursorEvent &e = gCursorEvent;
+                                AT_Log_I("HD",
+                                         "Mauszeiger: OnPaint %d,%d statt %d,%d (dx %d, dy %d); Raum %d, Look %d, gMousePosition %d,%d, Offset %d,%d, "
+                                         "gHallMargin %d, Bild %d breit, Ausschnitt %d, Ziel %d,%d+%dx%d | letztes OnMouseMove: Punkt im Fenster %d,%d, Spiel "
+                                         "%d,%d -> %d,%d, gHallMargin %d, Bild %d breit, Ausschnitt %d, Ziel %d,%d+%dx%d",
+                                         want.x, want.y, have.x, have.y, want.x - have.x, want.y - have.y,
+                                         Sim.localPlayer >= 0 ? SLONG(Sim.Players.Players[Sim.localPlayer].GetRoom()) : -1, MouseLook, gMousePosition.x,
+                                         gMousePosition.y, MouseCursorOffset.x, MouseCursorOffset.y, gHallMargin, PrimaryBm.PrimaryBm.GetXSize(),
+                                         PrimaryBm.PrimaryBm.GetViewOffset(), PrimaryBm.PrimaryBm.GetTargetOffset().x, PrimaryBm.PrimaryBm.GetTargetOffset().y,
+                                         PrimaryBm.PrimaryBm.GetTargetSize().x, PrimaryBm.PrimaryBm.GetTargetSize().y, e.Window.x, e.Window.y, e.Game.x,
+                                         e.Game.y, e.Placed.x, e.Placed.y, e.HallMargin, e.FrameW, e.ViewOffset, e.TargetOffset.x, e.TargetOffset.y,
+                                         e.TargetSize.x, e.TargetSize.y);
+                            }
+                        }
+                    }
+                    // H26: Bild und Hotspot wie bisher in jedem Frame (Animation von Exit-Pfeil und Fuessen); die Lage setzt OnPaint
+                    // nur noch, wenn sich Art oder Hotspot aendern, sonst ausschliesslich OnMouseMove (mit derselben Funktion)
+                    const bool lookChanged = MouseLook != LastMouseLook || LastFeet != gShowCursorFeet;
+                    const XY oldOffset = MouseCursorOffset;
+                    if ((lookChanged || MouseLook == CURSOR_EXIT || gShowCursorFeet != -1) && (pCursor != nullptr)) {
                         LastMouseLook = MouseLook;
                         LastFeet = gShowCursorFeet;
 
@@ -966,7 +1119,8 @@ void GameFrame::OnPaint() {
                         } else if (MouseLook == CURSOR_HOT) {
                             pCursor->SetImage(gCursorHotBm.pBitmap);
                         } else if (MouseLook == CURSOR_EXIT) {
-                            pCursor->SetImage(gCursorExitBms[SLONG((Sim.TickerTime / 2) % 12)].pBitmap);
+                            // H26: OptionCursorExitAnim 0 = stehender Pfeil (EXIT01) statt Animation
+                            pCursor->SetImage(gCursorExitBms[Sim.Options.OptionCursorExitAnim != 0 ? SLONG((Sim.TickerTime / 2) % 12) : 0].pBitmap);
                             MouseCursorOffset = XY(15, 12);
                         } else if (MouseLook == CURSOR_LEFT) {
                             pCursor->SetImage(gCursorLBm.pBitmap);
@@ -981,17 +1135,20 @@ void GameFrame::OnPaint() {
                             pCursor->SetImage(gCursorMoveVBm.pBitmap);
                             MouseCursorOffset = XY(0, 16);
                         }
-                        SLONG _x = gMousePosition.x;
-                        SLONG _y = gMousePosition.y;
-                        TranslatePointToScreenSpace(_x, _y);
-                        pCursor->MoveImage(_x - MouseCursorOffset.x, _y - MouseCursorOffset.y);
+                        if (lookChanged || MouseCursorOffset.x != oldOffset.x || MouseCursorOffset.y != oldOffset.y) {
+                            PlaceCursor();
+                        }
                     }
                 }
             }
         }
 
         SDL_GetWindowPosition(m_hWnd, &rcWindow.x, &rcWindow.y);
+        const double tCursor1 = FrameNowMs();
         PrimaryBm.Flip(rcWindow.x, rcWindow.y, TRUE);
+        if (Sim.Options.OptionHdFrameStats != 0) {
+            FrameStatsAdd(tCursor0 > 0 ? tCursor0 : tCursor1, tCursor1, tCursor1, FrameNowMs());
+        }
     }
     if ((bActive != 0) && (Sim.bPause != 0)) {
         TXY<SLONG> rcWindow;
@@ -1156,11 +1313,38 @@ void GameFrame::OnMouseMove(UINT /*nFlags*/, CPoint point) {
 
     if (gUseWindowsMouse == 0) {
         if ((bActive != 0) && (pCursor != nullptr) && bNoQuickMouse == FALSE) {
-            SLONG _x = gMousePosition.x;
-            SLONG _y = gMousePosition.y;
-            FrameWnd->TranslatePointToScreenSpace(_x, _y);
-            pCursor->MoveImage(_x - MouseCursorOffset.x, _y - MouseCursorOffset.y);
+            FrameWnd->PlaceCursor();
+            if (Sim.Options.OptionHdFrameStats != 0) {
+                CursorEvent &e = gCursorEvent;
+                e.Game = gMousePosition;
+                e.Placed = pCursor->GetPosition();
+                SLONG wx = point.x, wy = point.y;
+                FrameWnd->TranslatePointToScreenSpace(wx, wy);
+                e.Window = XY(wx, wy);
+                e.FrameW = PrimaryBm.PrimaryBm.GetXSize();
+                e.ViewOffset = PrimaryBm.PrimaryBm.GetViewOffset();
+                e.TargetSize = PrimaryBm.PrimaryBm.GetTargetSize();
+                e.TargetOffset = PrimaryBm.PrimaryBm.GetTargetOffset();
+                e.HallMargin = gHallMargin;
+            }
         }
+    }
+}
+
+//--------------------------------------------------------------------------------------------
+// H26: Lage des Mauszeigers im Fenster: gMousePosition (Spiel) -> Fenster, minus Hotspot. Einzige Rechnung dafuer.
+//--------------------------------------------------------------------------------------------
+XY GameFrame::CursorScreenPos() const {
+    SLONG x = gMousePosition.x;
+    SLONG y = gMousePosition.y;
+    TranslatePointToScreenSpace(x, y);
+    return XY(x - MouseCursorOffset.x, y - MouseCursorOffset.y);
+}
+
+void GameFrame::PlaceCursor() const {
+    if (pCursor != nullptr) {
+        const XY p = CursorScreenPos();
+        pCursor->MoveImage(p.x, p.y);
     }
 }
 

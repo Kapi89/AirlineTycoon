@@ -248,6 +248,17 @@ class SB_CBitmapCore {
     SLONG RefCounter{0};
 };
 
+// H26: Zeiten des letzten Present in ms (Mauszeiger zeichnen, SDL_RenderPresent, ganzes Present)
+struct SB_PresentTimes {
+    double CursorMs{0};
+    double PresentMs{0};
+    double TotalMs{0};
+    SLONG Count{0};       // Present-Aufrufe seit Programmstart
+    double MaxGapMs{0};   // groesste Luecke zwischen zwei Present (der Leser setzt sie zurueck)
+    double LastStartMs{0};
+};
+SB_PresentTimes &SB_GetPresentTimes();
+
 class SB_CCursor {
   public:
     SB_CCursor(class SB_CPrimaryBitmap *, class SB_CBitmapCore * = NULL);
@@ -262,6 +273,9 @@ class SB_CCursor {
     SLONG FlipEnd();
     SLONG Show(bool);
     SLONG Render(SDL_Renderer *);
+    XY GetPosition() const { return Position; } // H26: Diagnose
+    SLONG ImageChanges{0};     // H26: Zaehler fuer die Messung (OptionHdFrameStats)
+    SLONG BackgroundAllocs{0};
 
   private:
     SLONG BlitImage(SLONG, SLONG);
@@ -343,6 +357,9 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     void BeginView(SLONG ox, SLONG w = -1); // w: Breite des Fensters, -1 = mittig (Size.x - 2 * ox)
     void EndView();
     SLONG GetViewOffset() const { return ViewOffset; }
+    XY GetTargetSize() const { return TargetSize; }     // H26: Diagnose des Mauszeigers
+    XY GetTargetOffset() const { return TargetOffset; }
+    SLONG FrameWidth() const;    // ganze Bildbreite, auch waehrend BeginView (H26)
     XY GameToWindow(XY p) const; // Bild -> Fenster (fuer den Mauszeiger)
     XY WindowToGame(XY p) const; // Fenster -> Bild (Mausposition)
     void SetVSync(BOOL toggle) { SDL_RenderSetVSync(lpDD, toggle); }

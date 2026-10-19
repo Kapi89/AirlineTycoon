@@ -2615,7 +2615,17 @@ void SB_CPrimaryBitmap::CopyFrameTexture(SDL_Texture *tex) {
     SDL_RenderCopyF(lpDD, tex, nullptr, &full);
 }
 
+static SB_PresentTimes gPresentTimes;
+static double SB_NowMs() { return double(SDL_GetPerformanceCounter()) * 1000.0 / double(SDL_GetPerformanceFrequency()); }
+SB_PresentTimes &SB_GetPresentTimes() { return gPresentTimes; }
+
 SLONG SB_CPrimaryBitmap::Present() {
+    const double tStart = SB_NowMs();
+    if (gPresentTimes.LastStartMs > 0) {
+        gPresentTimes.MaxGapMs = std::max(gPresentTimes.MaxGapMs, tStart - gPresentTimes.LastStartMs);
+    }
+    gPresentTimes.LastStartMs = tStart;
+    gPresentTimes.Count++;
     if (lpDD != nullptr) {
         const bool border = PrepareRoomBorder();
         SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
@@ -2660,11 +2670,16 @@ SLONG SB_CPrimaryBitmap::Present() {
         }
 
         // Render the cursor onto the backbuffer
+        const double tCursor = SB_NowMs();
         if (Cursor != nullptr) {
             Cursor->Render(lpDD);
         }
 
+        const double tPresent = SB_NowMs();
         SDL_RenderPresent(lpDD);
+        gPresentTimes.CursorMs = tPresent - tCursor;
+        gPresentTimes.PresentMs = SB_NowMs() - tPresent;
+        gPresentTimes.TotalMs = SB_NowMs() - tStart;
         if (gHdPrimary == this && SB_GetRenderScale() > 1) {
             HdStatAllPresents++;
             HdStatPresentsNoHd += HdThisFrame ? 0 : 1;
@@ -2707,18 +2722,23 @@ void SB_CPrimaryBitmap::UpdateFrameTarget() {
     TargetOffset = XY(CanvasOffset.x + (CanvasSize.x - w) / 2, CanvasOffset.y);
 }
 
+// H26: immer mit der ganzen Bildbreite, nie mit der eines Ausschnitts (BeginView). Raeume verarbeiten Mausereignisse
+// auch waehrend ihr Ausschnitt aktiv ist (MessagePump am Ende von CStdRaum::PostPaint).
+SLONG SB_CPrimaryBitmap::FrameWidth() const { return ViewSurface != nullptr ? FullSizeX : Size.x; }
+
 XY SB_CPrimaryBitmap::GameToWindow(XY p) const {
-    if (Size.x <= 0 || Size.y <= 0) {
+    const SLONG w = FrameWidth();
+    if (w <= 0 || Size.y <= 0) {
         return p;
     }
-    return XY(TargetOffset.x + SLONG(float(p.x) * float(TargetSize.x) / float(Size.x)), TargetOffset.y + SLONG(float(p.y) * float(TargetSize.y) / float(Size.y)));
+    return XY(TargetOffset.x + SLONG(float(p.x) * float(TargetSize.x) / float(w)), TargetOffset.y + SLONG(float(p.y) * float(TargetSize.y) / float(Size.y)));
 }
 
 XY SB_CPrimaryBitmap::WindowToGame(XY p) const {
     if (TargetSize.x <= 0 || TargetSize.y <= 0) {
         return p;
     }
-    return XY(SLONG(float(p.x - TargetOffset.x) * float(Size.x) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
+    return XY(SLONG(float(p.x - TargetOffset.x) * float(FrameWidth()) / float(TargetSize.x)), SLONG(float(p.y - TargetOffset.y) * float(Size.y) / float(TargetSize.y)));
 }
 
 void SB_CPrimaryBitmap::ShiftHdEntries(SLONG dx) {
