@@ -249,7 +249,7 @@ static long ExportClip(const std::string &clip, const std::set<std::string> &roo
     return frames;
 }
 
-void HdVideoExport(const std::string &specIn) {
+int HdVideoExport(const std::string &specIn) {
     const std::string spec = Lower(specIn);
     std::map<std::string, std::set<std::string>> clips; // Clip -> Raeume
     std::map<std::string, std::set<std::string>> all;
@@ -287,9 +287,13 @@ void HdVideoExport(const std::string &specIn) {
         }
     }
     if (clips.empty()) {
-        return;
+        return -1;
     }
     const fs::path outRoot = fs::path((LPCTSTR)AppPath) / "hd_assets" / "original" / "video";
+    const fs::path done = outRoot / "export_fertig.txt"; // H29: daran erkennt HD_erzeugen.bat einen vollstaendigen Export
+    std::error_code ec;
+    fs::create_directories(outRoot, ec);
+    fs::remove(done, ec);
     AT_Log_I("HD", "Video-Export: %d Clips nach %s", int(clips.size()), outRoot.string().c_str());
     long total = 0;
     int missing = 0;
@@ -303,4 +307,11 @@ void HdVideoExport(const std::string &specIn) {
     }
     AT_Log_I("HD", "Video-Export fertig: %d Clips, %ld Bilder, %d Clips fehlen. Zaehlung: python3 tools/video_count.py %s",
              int(clips.size()) - missing, total, missing, outRoot.string().c_str());
+    FILE *f = fopen((done.string() + ".tmp").c_str(), "w");
+    if (f != nullptr) {
+        fprintf(f, "auswahl;%s\nclips;%d\nbilder;%ld\nfehlen;%d\n", spec.c_str(), int(clips.size()) - missing, total, missing);
+        fclose(f);
+        fs::rename(done.string() + ".tmp", done, ec);
+    }
+    return int(clips.size()) - missing;
 }

@@ -6,6 +6,7 @@ Aufruf:
   python3 tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur schriften
   python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu
   python3 tools/hd_generate.py SPIELORDNER --nur animationen --raum duty   # Animationen nur auf Wunsch, raumweise
+  python3 tools/hd_generate.py SPIELORDNER --alles --gpu --log hd_erzeugen.log  # alles inkl. Animationen (HD_erzeugen.bat)
 
 Der Datenordner (mit gli/) wird im angegebenen Ordner gesucht, auch tief in einem Mac-.app-Paket. Dort sucht das
 Spiel auch hd/, dorthin gehoert also auch die neue AT.exe bzw. AT. --gpu nutzt CUDA (NVIDIA) oder MPS (Apple-Chip).
@@ -79,7 +80,7 @@ MODELLE = {
 class Plan:
     """Bestimmt Verfahren, Modell und Kategorie je exportierter PNG."""
 
-    def __init__(self, path=MANIFEST, bausteine_modellkante=False):
+    def __init__(self, path=MANIFEST, bausteine_modellkante=True):
         self.bausteine_modellkante = bausteine_modellkante
         with open(path, encoding="utf-8") as fh:
             m = json.load(fh)
@@ -127,7 +128,7 @@ class Plan:
             modell = "x4plus" if verfahren in ("foto_rgb", "figur_rgba") else "ultrasharp"
         kategorie = self.kategorie(schluessel, verfahren)
         if self.bausteine_modellkante and kategorie == "bausteine" and verfahren == "colorkey_rgba":
-            verfahren = "colorkey_rgba_modellkante"  # H24: Kante per Modell statt Lanczos (--bausteine-modellkante)
+            verfahren = "colorkey_rgba_modellkante"  # H24: Kante per Modell statt Lanczos (seit H29 Standard)
         return verfahren, modell, kategorie
 
     def schrift(self, name):
@@ -403,12 +404,12 @@ def auftraege_sammeln(original, ziel, plan, kategorien, raeume=None):
               + ", ".join(unbekannte_schriften))
     if "animationen" not in kategorien and os.path.isdir(os.path.join(original, "video")):
         print("Hinweis: Animationen (Video-Export vorhanden) gehoeren nicht zum Standardumfang: "
-              "--nur animationen [--raum <name>]")
+              "--alles oder --nur animationen [--raum <name>]")
     if "animationen" in kategorien:
         nclips = len([c for c in clips.values() if c]) - len(andere_raeume)
         if not clips:
             print(f"Hinweis: kein Video-Export in {os.path.join(original, 'video')}. Die Animationen exportiert das Spiel "
-                  "selbst: in AT.json \"OptionHdVideoExport\": \"alle\" (oder Raeume) setzen und das Spiel starten.")
+                  "selbst: AT.exe --hd-export alle (oder Raeume) starten; HD_erzeugen.bat macht das automatisch.")
         else:
             print(f"Animationen: {nclips} Clips" + (f" (Raum {', '.join(raeume)})" if raeume else "")
                   + (f", {leer} leere Bilder bleiben 1x" if leer else ""))
@@ -512,24 +513,58 @@ class Cache:
         self.fh.flush()
 
 
-# ---------------------------------------------------------------- Fortschritt
+# ---------------------------------------------------------------- Fortschritt und Log
 
 _TTY = sys.stdout.isatty()
-_letzte = [0.0]
+_letzte = [0.0, 0.0]  # letzte Fortschrittszeile auf dem Bildschirm (ohne Konsole) und im Log
+_LOG = [None]
+
+
+class _Tee:
+    """--log: alles, was auf dem Bildschirm erscheint, auch an die Logdatei anhaengen."""
+
+    def __init__(self, strom, log):
+        self.strom, self.log = strom, log
+
+    def write(self, text):
+        self.strom.write(text)
+        self.log.write(text)
+        return len(text)
+
+    def flush(self):
+        self.strom.flush()
+        self.log.flush()
+
+    def isatty(self):
+        return self.strom.isatty()
+
+
+def log_starten(pfad):
+    log = open(pfad, "a", encoding="utf-8", errors="replace", buffering=1)
+    log.write(f"\n===== hd_generate.py {time.strftime('%Y-%m-%d %H:%M:%S')}: {' '.join(sys.argv[1:])}\n")
+    _LOG[0] = log
+    sys.stdout = _Tee(sys.__stdout__, log)
+    sys.stderr = _Tee(sys.__stderr__, log)
 
 
 def fortschritt(text):
+    jetzt = time.time()
+    if _LOG[0] and jetzt - _letzte[1] > 60:  # Fortschritt ins Log nur einmal pro Minute
+        _letzte[1] = jetzt
+        _LOG[0].write(time.strftime("%H:%M:%S ") + text + "\n")
+    konsole = sys.__stdout__ if _LOG[0] else sys.stdout
     if _TTY:
-        sys.stdout.write("\r" + text[:118].ljust(118))
-        sys.stdout.flush()
-    elif time.time() - _letzte[0] > 10:
-        _letzte[0] = time.time()
-        print(text, flush=True)
+        konsole.write("\r" + text[:118].ljust(118))
+        konsole.flush()
+    elif jetzt - _letzte[0] > 10:
+        _letzte[0] = jetzt
+        konsole.write(text + "\n")
+        konsole.flush()
 
 
 def fortschritt_ende():
     if _TTY:
-        sys.stdout.write("\n")
+        (sys.__stdout__ if _LOG[0] else sys.stdout).write("\n")
 
 
 def dauer(s):
@@ -550,6 +585,7 @@ def main():
     ap.add_argument("--arbeit", help="Arbeitsordner fuer Export und Cache (Standard: hd_assets/ neben hd/)")
     ap.add_argument("--nur", help="nur diese Kategorien, mit Komma getrennt: " + ", ".join(KATEGORIEN)
                     + " (animationen nur auf Wunsch, nicht im Standardumfang)")
+    ap.add_argument("--alles", action="store_true", help="alle Kategorien einschliesslich der Animationen")
     ap.add_argument("--raum", help="Animationen nur fuer diese Raeume (Anfang des Namens genuegt, mit Komma getrennt), "
                                    "z. B. duty oder bank,makler")
     ap.add_argument("--gpu", action="store_true",
@@ -560,12 +596,21 @@ def main():
     ap.add_argument("--x4plus", help="Pfad zu RealESRGAN_x4plus.pth")
     ap.add_argument("--nicht-fragen", action="store_true", help="bei fehlendem Modell nicht nach dem Pfad fragen")
     ap.add_argument("--liste", action="store_true", help="nur exportieren und zaehlen, nichts rechnen")
-    ap.add_argument("--bausteine-modellkante", action="store_true",
-                    help="Hallen-Bausteine mit colorkey_rgba_modellkante (Kante per Modell statt Lanczos); "
+    ap.add_argument("--bausteine-modellkante", action="store_true", default=True,
+                    help="Hallen-Bausteine mit colorkey_rgba_modellkante, Kante per Modell (Standard seit H29)")
+    ap.add_argument("--bausteine-lanczos", dest="bausteine_modellkante", action="store_false",
+                    help="Hallen-Bausteine wie vor H29 mit colorkey_rgba (Kante per Lanczos); "
                          "vorhandene Bausteine werden dann neu gerechnet")
+    ap.add_argument("--log", help="Ausgaben zusaetzlich an diese Datei anhaengen (Fortschritt einmal pro Minute)")
     ARGS = args = ap.parse_args()
+    if args.log:
+        log_starten(args.log)
 
-    if args.nur:
+    if args.alles and args.nur:
+        raise SystemExit("--alles und --nur schliessen sich aus")
+    if args.alles:
+        kategorien = set(KATEGORIEN)
+    elif args.nur:
         kategorien = {k.strip() for k in args.nur.split(",") if k.strip()}
         falsch = kategorien - set(KATEGORIEN)
         if falsch:
@@ -603,7 +648,7 @@ def main():
     for a in auftraege:
         zaehler[(a.kategorie, a.verfahren)] = zaehler.get((a.kategorie, a.verfahren), 0) + 1
     for (kat, verf), n in sorted(zaehler.items(), key=lambda x: (KATEGORIEN.index(x[0][0]), x[0][1])):
-        print(f"  {kat:<11} {verf:<19} {n:6d}")
+        print(f"  {kat:<11} {verf:<25} {n:6d}")
     os.makedirs(arbeit, exist_ok=True)
     cache = Cache(os.path.join(arbeit, "hd_cache.jsonl"), ziel)
     fehlend = [a for a in auftraege if not os.path.exists(a.ziel)]

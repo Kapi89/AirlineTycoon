@@ -214,6 +214,95 @@ jobs:
         name: ${{ steps.artifact-win.outputs.artifact-name || steps.artifact-linux.outputs.artifact-name }}
         path: ${{ steps.artifact-win.outputs.artifact-path || steps.artifact-linux.outputs.artifact-path }}
 
+  # H29: HD_erzeugen.bat einmal komplett auf einem Windows ohne Python durchspielen. Mit kuenstlichen Testdaten
+  # (tools/hd_testdaten.py, keine Spieldaten); Modelle und Python-Pakete kommen wie beim Nutzer aus dem Netz.
+  hd-test:
+    needs: [ env, build ]
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download Windows package
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.env.outputs.artifact-name }}-windows.zip
+        path: paket
+
+    - name: Unpack package and create test data
+      run: |
+        $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
+        New-Item -ItemType Directory -Force -Path $spiel | Out-Null
+        Expand-Archive -Path "paket\${{ needs.env.outputs.artifact-name }}-windows.zip" -DestinationPath $spiel
+        python tools\hd_testdaten.py $spiel
+        Get-ChildItem -Recurse $spiel | Where-Object { -not $_.PSIsContainer } | Select-Object -ExpandProperty FullName
+
+    - name: Remove Python (fresh Windows)
+      run: |
+        # Python des Runners unsichtbar machen: PATH (setzt GITHUB_ENV fuer die folgenden Schritte), py-Launcher, Registry
+        $rest = ($env:Path -split ';' | Where-Object { $_ -and $_ -notmatch 'Python' }) -join ';'
+        "PATH=$rest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        foreach ($f in @("$env:SystemRoot\py.exe", "$env:SystemRoot\pyw.exe", "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe")) {
+          if (Test-Path $f) { Rename-Item $f ((Split-Path -Leaf $f) + '.weg'); Write-Host "versteckt: $f" }
+        }
+        foreach ($k in @('HKLM:\SOFTWARE\Python', 'HKCU:\SOFTWARE\Python', 'HKLM:\SOFTWARE\WOW6432Node\Python')) {
+          if (Test-Path $k) { Remove-Item $k -Recurse -Force; Write-Host "entfernt: $k" }
+        }
+        foreach ($d in @("$env:LOCALAPPDATA\Programs\Python", "$env:ProgramFiles\Python*")) {
+          Get-ChildItem $d -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "vorhanden: $($_.FullName)" }
+        }
+        Get-Command winget -ErrorAction SilentlyContinue | Format-List Source, Version
+
+    - name: Check that no Python is found
+      run: |
+        $treffer = @(Get-Command python, python3, py -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' })
+        $treffer | ForEach-Object { Write-Host "noch da: $($_.Source)" }
+        if ($treffer.Count -gt 0) { throw 'Python ist noch auffindbar' }
+
+    - name: Run 1 - HD_erzeugen.bat -Nur schriften,stadtfotos
+      shell: cmd
+      run: |
+        call "C:\hdtest\Airline Tycoon Deluxe\HD_erzeugen.bat" -Ja -Behalten -Nur schriften,stadtfotos
+
+    - name: Check run 1
+      run: |
+        $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
+        function Png([string]$p) { $b = [IO.File]::ReadAllBytes($p); return @(([int]$b[18] -shl 8) + $b[19], ([int]$b[22] -shl 8) + $b[23]) }
+        $foto = Png "$spiel\hd\gli\testa1.gli\TESTA1.png"
+        $schrift = Png "$spiel\hd\misc\norm_bl.mcf.png"
+        Write-Host "Stadtfoto $foto, Schrift $schrift"
+        if ($foto[0] -ne 360 -or $foto[1] -ne 240) { throw 'Stadtfoto nicht 4x' }
+        if ($schrift[0] -ne 32 -or $schrift[1] -ne 8920) { throw 'Schrift nicht 4x' }
+        if (Test-Path "$spiel\hd\gli\glstd.gli") { throw '-Nur nicht beachtet' }
+        if (-not (Select-String -Path "$spiel\AT.json" -Pattern '"OptionRenderScale": 4' -Quiet)) { throw 'AT.json nicht eingestellt' }
+
+    - name: Run 2 - HD_erzeugen.bat (everything, resumes)
+      shell: cmd
+      run: |
+        call "C:\hdtest\Airline Tycoon Deluxe\HD_erzeugen.bat" -Ja
+
+    - name: Check run 2
+      run: |
+        $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
+        foreach ($f in @('hd\gli\glstd.gli\MENU.png', 'hd\gli\glbrick.gli\BRICK1.png', 'hd\room\kiosk.gli\ZEITUNG.png',
+                         'hd\video\dukau.smk\0000.png', 'hd\video\dukau.smk\crop.csv', 'hd_erzeugen.log')) {
+          if (-not (Test-Path "$spiel\$f")) { throw "fehlt: $f" }
+        }
+        if (Test-Path "$spiel\hd_assets") { throw 'Zwischendateien nicht geloescht' }
+        if (Test-Path "$spiel\hd_tools\venv") { throw 'Python-Umgebung nicht geloescht' }
+        $log = Get-Content "$spiel\hd_erzeugen.log" -Raw
+        foreach ($t in @('Pakete schon installiert', 'vorhanden, Pruefsumme stimmt', 'Export fertig: 1 Clips', 'Fertig nach')) {
+          if ($log -notmatch [regex]::Escape($t)) { throw "Log enthaelt nicht: $t" }
+        }
+
+    - name: Upload log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hd_erzeugen-log
+        path: C:\hdtest\Airline Tycoon Deluxe\hd_erzeugen.log
+
   release:
     runs-on: ubuntu-latest
     needs: [ build, env ]
