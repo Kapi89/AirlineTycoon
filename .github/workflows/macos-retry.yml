@@ -1,0 +1,48 @@
+# Sicherheitsnetz fuer "build and package": Bekommt der macOS-Build keinen GitHub-Runner (Job nach 15 min ohne einen
+# einzigen Schritt abgebrochen, "The job was not acquired by Runner ... even after multiple attempts"), werden die
+# fehlgeschlagenen Jobs nach einer Pause neu gestartet, bis zu 5-mal. Alle anderen Fehler bleiben unangetastet.
+# Hinweis: workflow_run startet nur mit der Fassung dieser Datei auf dem Standard-Zweig (master).
+name: macOS retry
+
+on:
+  workflow_run:
+    workflows: [ "build and package" ]
+    types: [ completed ]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+    - name: Re-run when only macOS got no runner
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        RUN: ${{ github.event.workflow_run.id }}
+      run: |
+        nur_mac_ohne_runner() {
+          gh api "repos/$REPO/actions/runs/$RUN/jobs" --jq '
+            [.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled")] as $rot
+            | ($rot | length) > 0
+              and ($rot | all((.name | test("macos")) and ((.steps | length) == 0)))'
+        }
+        for versuch in 1 2 3 4 5; do
+          if [ "$(nur_mac_ohne_runner)" != "true" ]; then
+            echo "Kein reiner Runner-Ausfall bei macOS (mehr): nichts zu tun."
+            exit 0
+          fi
+          echo "Versuch $versuch: macOS ohne Runner. Warte 5 Minuten, dann Neustart der fehlgeschlagenen Jobs."
+          sleep 300
+          gh api -X POST "repos/$REPO/actions/runs/$RUN/rerun-failed-jobs"
+          sleep 60
+          until [ "$(gh api "repos/$REPO/actions/runs/$RUN" --jq .status)" = "completed" ]; do sleep 60; done
+          echo "Ergebnis: $(gh api "repos/$REPO/actions/runs/$RUN" --jq .conclusion)"
+          if [ "$(gh api "repos/$REPO/actions/runs/$RUN" --jq .conclusion)" = "success" ]; then exit 0; fi
+        done
+        echo "macOS hat nach 5 Neustarts keinen Runner bekommen."
+        exit 1
