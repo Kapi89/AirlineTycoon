@@ -135,6 +135,8 @@ function Ausfuehren([string]$Programm, [string[]]$Argumente, [switch]$Leise) {
     try {
         & $Programm @Argumente 2>&1 | ForEach-Object {
             $zeile = "$_"
+            # Drehstrich und Fortschrittsbalken (winget, pip) nicht zeilenweise ausgeben
+            if ($zeile -match '^\s*[-\\|/]?\s*$' -or $zeile -match '[0-9.]+ [KMG]B / [0-9.]+ [KMG]B') { return }
             if (-not $Leise) { Write-Host "    $zeile" }
             Log "    $zeile"
         }

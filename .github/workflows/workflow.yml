@@ -270,7 +270,12 @@ jobs:
     - name: Check run 1
       run: |
         $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
-        function Png([string]$p) { $b = [IO.File]::ReadAllBytes($p); return @(([int]$b[18] -shl 8) + $b[19], ([int]$b[22] -shl 8) + $b[23]) }
+        function Png([string]$p) {
+          $b = [IO.File]::ReadAllBytes($p)
+          $w = ([int]$b[18] -shl 8) + [int]$b[19]
+          $h = ([int]$b[22] -shl 8) + [int]$b[23]
+          return @($w, $h)
+        }
         $foto = Png "$spiel\hd\gli\testa1.gli\TESTA1.png"
         $schrift = Png "$spiel\hd\misc\norm_bl.mcf.png"
         Write-Host "Stadtfoto $foto, Schrift $schrift"
