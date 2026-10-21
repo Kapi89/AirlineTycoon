@@ -216,25 +216,27 @@ jobs:
 
   # H29: HD_erzeugen.bat einmal komplett auf einem Windows ohne Python durchspielen. Mit kuenstlichen Testdaten
   # (tools/hd_testdaten.py, keine Spieldaten); Modelle und Python-Pakete kommen wie beim Nutzer aus dem Netz.
+  # Baut selbst (wie der Windows-Build oben), damit der Test nicht auf die anderen Plattformen wartet.
   hd-test:
-    needs: [ env, build ]
+    needs: [ env ]
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Download Windows package
-      uses: actions/download-artifact@v4
       with:
-        name: ${{ needs.env.outputs.artifact-name }}-windows.zip
-        path: paket
+        submodules: true
 
-    - name: Unpack package and create test data
+    - name: Build
+      run: |
+        cmake -B cmake-build -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -S ${{ github.workspace }}
+        cmake --build cmake-build --config Release
+
+    - name: Install package and create test data
       run: |
         $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
         New-Item -ItemType Directory -Force -Path $spiel | Out-Null
-        Expand-Archive -Path "paket\${{ needs.env.outputs.artifact-name }}-windows.zip" -DestinationPath $spiel
+        Copy-Item -Recurse -Path 'cmake-build\Release\*' -Destination $spiel
         python tools\hd_testdaten.py $spiel
         Get-ChildItem -Recurse $spiel | Where-Object { -not $_.PSIsContainer } | Select-Object -ExpandProperty FullName
 
