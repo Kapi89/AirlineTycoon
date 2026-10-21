@@ -31,7 +31,7 @@ It is therefore *not* open-source in the free software sense, for more informati
 
 Ab Version 2.0.0 kann das Spiel alle Grafiken in 4-facher Aufloesung zeichnen. Die HD-Grafiken sind **nicht** im
 Download enthalten: Jede Person erzeugt sie aus der eigenen, gekauften Spielkopie. Unter Windows geht das mit einem
-Doppelklick auf `HD_erzeugen.bat`. Ohne HD-Grafiken laeuft das Spiel wie bisher.
+Doppelklick auf `HD_generate.bat`. Ohne HD-Grafiken laeuft das Spiel wie bisher.
 
 ### Lizenz: bitte zuerst lesen
 
@@ -41,7 +41,7 @@ Doppelklick auf `HD_erzeugen.bat`. Ohne HD-Grafiken laeuft das Spiel wie bisher.
   weitergeben, nicht hochladen, nicht verkaufen.
 - **Modelle:** `4x-UltraSharp` steht unter CC BY-NC-SA 4.0 und darf **nur nicht-kommerziell** genutzt werden.
   `RealESRGAN_x4plus` steht unter BSD-3-Clause. Sie liegen nicht im Repository und nicht im Download.
-  `HD_erzeugen.bat` zeigt die Lizenzen an und laedt die Modelle erst, wenn man mit `J` zustimmt; jede Datei wird an
+  `HD_generate.bat` zeigt die Lizenzen an und laedt die Modelle erst, wenn man mit `Y` zustimmt; jede Datei wird an
   ihrer Pruefsumme (SHA-256) als die Originaldatei des Autors erkannt. `tools/hd_generate.py` selbst laedt nichts
   aus dem Netz.
 
@@ -49,16 +49,18 @@ Doppelklick auf `HD_erzeugen.bat`. Ohne HD-Grafiken laeuft das Spiel wie bisher.
 
 1. **Spiel und die neueste Version installieren** (ab Version 2.0.4) wie unter [Installation](#installation)
    beschrieben: das Release-Archiv in den Spielordner entpacken, in den Ordner mit `gli`, `room` und `misc`. Danach
-   liegen dort `AT.exe`, `HD_erzeugen.bat` und der Ordner `hd_tools`.
-2. **Doppelklick auf `HD_erzeugen.bat`.** Fragt Windows nach ("Der Computer wurde durch Windows geschuetzt"), auf
+   liegen dort `AT.exe`, `HD_generate.bat` und der Ordner `hd_tools`.
+2. **Doppelklick auf `HD_generate.bat`.** Fragt Windows nach ("Der Computer wurde durch Windows geschuetzt"), auf
    "Weitere Informationen" und "Trotzdem ausfuehren" klicken. Das Skript erledigt alles Weitere und zeigt jeweils
-   "Schritt x von 8":
+   "Step x of 8". Seine Meldungen und Rueckfragen sind auf Englisch; Zustimmung mit `Y` (auch `J` geht):
    - prueft Spielordner, `AT.exe` und Spieldaten,
    - sucht Python 3.10 bis 3.13; fehlt es, bietet es die Installation mit `winget` an (nur fuer den eigenen
      Benutzer) oder nennt, was zu tun ist,
    - richtet eine eigene Python-Umgebung in `hd_tools\venv` ein; mit NVIDIA-Grafikkarte (`nvidia-smi`) mit CUDA,
-   - zeigt die Lizenzen der beiden Modelle und laedt sie nach `J` in den Ordner `models`,
-   - exportiert die animierten Personen der Raeume (`AT.exe --hd-export alle`, ohne Fenster),
+   - zeigt die Lizenzen der beiden Modelle und laedt sie nach `Y` in den Ordner `models`,
+   - exportiert die animierten Personen der Raeume (`AT.exe --hd-export alle`, ohne Fenster). Bricht `AT.exe` dabei
+     ab, startet das Skript es neu und laesst den betroffenen Clip aus; klappt der Export gar nicht, rechnet es alles
+     andere und nennt am Ende, was in normaler Aufloesung bleibt,
    - rechnet alle HD-Grafiken nach `hd` (mit Grafikkarte, wenn vorhanden) und zeigt die geschaetzte Restzeit,
    - setzt in `AT.json` `"OptionRenderScale": 4` und fragt, ob die Zwischendateien (`hd_assets`) und die
      Python-Umgebung geloescht werden sollen.
@@ -67,20 +69,21 @@ Doppelklick auf `HD_erzeugen.bat`. Ohne HD-Grafiken laeuft das Spiel wie bisher.
 Dauer: mit NVIDIA-Grafikkarte je nach Karte etwa eine Stunde, nur mit dem Prozessor ein bis zwei Tage (die
 Animationen sind der groesste Teil; mehr Prozessorkerne helfen). **Abbrechen** geht jederzeit mit Strg+C oder durch Schliessen des Fensters; der naechste Doppelklick setzt an
 der Stelle fort. Platzbedarf: etwa 15 GB waehrend des Laufs, danach bleibt im Wesentlichen `hd`. Bei Problemen die
-Datei `hd_erzeugen.log` im Spielordner mitschicken.
+Datei `hd_generate.log` im Spielordner mitschicken.
 
-Liegt das Spiel unter `C:\Program Files`, darf dort nicht jeder schreiben: dann `HD_erzeugen.bat` per Rechtsklick
+Liegt das Spiel unter `C:\Program Files`, darf dort nicht jeder schreiben: dann `HD_generate.bat` per Rechtsklick
 "Als Administrator ausfuehren".
 
 #### In English (short)
 
 Windows: unpack the release (2.0.4 or later) into your game folder (the one with `gli`, `room`, `misc`) and
-double-click `HD_erzeugen.bat`. It checks the game folder, installs Python 3.12 with `winget` if needed (after asking),
+double-click `HD_generate.bat`. It checks the game folder, installs Python 3.12 with `winget` if needed (after asking),
 sets up its own Python environment in `hd_tools\venv` (with CUDA on NVIDIA cards), shows the model licenses and
-downloads the two models after you type `J` (= yes; 4x-UltraSharp is CC BY-NC-SA 4.0, non-commercial only), exports the
-room animations with `AT.exe --hd-export alle`, generates all HD graphics into `hd`, sets `"OptionRenderScale": 4` in
-`AT.json` and offers to delete the temporary files. Press Ctrl+C to stop; the next double-click resumes. The messages
-are in German; send `hd_erzeugen.log` if something goes wrong. The HD graphics are for private use only.
+downloads the two models after you type `Y` (4x-UltraSharp is CC BY-NC-SA 4.0, non-commercial only), exports the
+room animations with `AT.exe --hd-export alle` (a clip that fails is skipped and reported), generates all HD graphics
+into `hd`, sets `"OptionRenderScale": 4` in `AT.json` and offers to delete the temporary files. Press Ctrl+C to stop;
+the next double-click resumes. All messages are in English; send `hd_generate.log` if something goes wrong. The HD
+graphics are for private use only.
 
 ### Fuer Fortgeschrittene: von Hand (Windows, Linux, macOS)
 
@@ -137,7 +140,8 @@ are in German; send `hd_erzeugen.log` if something goes wrong. The HD graphics a
    - Die Hallen-Bausteine bekommen ihre Kante per Modell (glattere Raender, Standard seit 2.0.4);
      `--bausteine-lanczos` rechnet sie wie vorher.
    - `--gpu` rechnet auf der Grafikkarte: CUDA (NVIDIA, Windows/Linux) oder MPS (Mac mit Apple-Chip), sonst auf der
-     CPU. `--liste` zeigt nur, was zu tun ist. `--log DATEI` schreibt alle Ausgaben zusaetzlich in eine Datei.
+     CPU. `--liste` zeigt nur, was zu tun ist. `--log DATEI` schreibt alle Ausgaben zusaetzlich in eine Datei,
+     `--english` gibt die Meldungen auf Englisch aus.
    - Das Ergebnis ist reproduzierbar: gleiche Spielkopie, gleiche Modelle und CPU ergeben dieselben Bilder.
 8. **Im Spiel einschalten:** in der Datei `AT.json` neben der `AT.exe` `"OptionRenderScale": 4` eintragen (die Datei
    entsteht beim ersten Start des Spiels).
@@ -216,9 +220,9 @@ You can see the instructions to build and run the project in [BUILDING.md](BUILD
 ## Changes
 
 ### HD graphics and widescreen (2.0.0 - 2.0.4)
-* 2.0.4: `HD_erzeugen.bat` generates all HD graphics with one double-click on Windows (Python, models after license
+* 2.0.4: `HD_generate.bat` generates all HD graphics with one double-click on Windows (Python, models after license
   confirmation, room animations via the new start parameter `AT.exe --hd-export alle`); model edges for hall bricks are
-  now the default
+  now the default; fixed crashes in the Smacker video decoder (empty Huffman trees, frame sizes not a multiple of 4)
 * Optional 4x HD graphics, generated locally from your own copy of the game with `tools/hd_generate.py` (see the German
   guide above; nothing copyrighted is distributed): rooms, UI, fonts, city photos, airport hall bricks, people in the
   hall, thought bubbles and, since 2.0.3, the animated people in rooms

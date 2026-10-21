@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -23,6 +24,12 @@
 #include <set>
 #include <sstream>
 #include <vector>
+
+#if defined(_MSC_VER)
+#include <excpt.h>
+#elif !defined(_WIN32)
+#include <csetjmp>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -200,9 +207,12 @@ static long ExportClip(const std::string &clip, const std::set<std::string> &roo
             return -1;
         }
         unsigned long cur = 0, count = 0;
+        unsigned char yMode = 0;
         smk_enable_video(s, 1U);
         smk_info_all(s, &cur, &count, nullptr);
-        smk_info_video(s, &w, &h, nullptr);
+        smk_info_video(s, &w, &h, &yMode);
+        // H29: vor dem Dekodieren ins Log, damit ein Absturz einem Clip und seinen Eigenschaften zuzuordnen ist
+        AT_Log_I("HD", "Video-Export %s: %lux%lu, %lu Bilder, Y-Modus %d", clip.c_str(), w, h, count, int(yMode));
         char rc = smk_first(s);
         for (unsigned long f = 0; f < count && rc != SMK_ERROR; f++) {
             memcpy(pal, smk_get_palette(s), sizeof(pal));
@@ -249,7 +259,120 @@ static long ExportClip(const std::string &clip, const std::set<std::string> &roo
     return frames;
 }
 
-int HdVideoExport(const std::string &specIn) {
+//--------------------------------------------------------------------------------------------
+// H29: Fehler je Clip abfangen. C++-Ausnahmen per try/catch; Speicherzugriffsfehler (z. B. im Smacker-Decoder) unter
+// MSVC per SEH, sonst per Signal-Handler. Danach laeuft der Export mit dem naechsten Clip weiter. Was nicht abgefangen
+// werden kann (exit() in libsmacker bei fehlendem Speicher, Heap-Schaeden), erkennt der naechste Start an
+// export_laeuft.txt und ueberspringt den Clip.
+//--------------------------------------------------------------------------------------------
+struct ClipJob {
+    const std::string *Clip;
+    const std::set<std::string> *Rooms;
+    const fs::path *OutRoot;
+    long Result;
+    char Error[256];
+};
+
+// Nur fuer den CI-Test (H29): AT_HD_EXPORT_TEST="absturz:<clip>,ende:<clip>" simuliert beim Clip einen
+// Speicherzugriffsfehler bzw. ein exit() wie in libsmacker bei fehlendem Speicher.
+static void TestHook(const std::string &clip) {
+    const char *env = getenv("AT_HD_EXPORT_TEST");
+    if (env == nullptr) {
+        return;
+    }
+    for (const auto &tok : Split(env)) {
+        if (tok == "absturz:" + clip) {
+            AT_Log_I("HD", "Video-Export %s: Test-Absturz", clip.c_str());
+            volatile int *volatile p = nullptr;
+            *p = 1;
+        }
+        if (tok == "ende:" + clip) {
+            AT_Log_I("HD", "Video-Export %s: Test-Ende", clip.c_str());
+            exit(3);
+        }
+    }
+}
+
+static void RunClipJob(ClipJob *job) {
+    TestHook(*job->Clip);
+    try {
+        job->Result = ExportClip(*job->Clip, *job->Rooms, *job->OutRoot);
+    } catch (const std::exception &e) {
+        job->Result = -2;
+        snprintf(job->Error, sizeof(job->Error), "Ausnahme: %s", e.what());
+    } catch (...) {
+        job->Result = -2;
+        snprintf(job->Error, sizeof(job->Error), "unbekannte Ausnahme");
+    }
+}
+
+#if defined(_MSC_VER)
+static void RunClipJobGuarded(ClipJob *job) {
+    __try {
+        RunClipJob(job);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        job->Result = -2;
+        snprintf(job->Error, sizeof(job->Error), "Absturz, Ausnahme-Code 0x%08lX", static_cast<unsigned long>(GetExceptionCode()));
+    }
+}
+#elif !defined(_WIN32)
+static sigjmp_buf gClipJump;
+static volatile sig_atomic_t gClipSignal = 0;
+
+static void OnClipSignal(int sig) {
+    gClipSignal = sig;
+    siglongjmp(gClipJump, 1);
+}
+
+static void RunClipJobGuarded(ClipJob *job) {
+    const int sigs[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL};
+    struct sigaction sa{};
+    struct sigaction old[4]{};
+    sa.sa_handler = OnClipSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NODEFER;
+    for (int i = 0; i < 4; i++) {
+        sigaction(sigs[i], &sa, &old[i]);
+    }
+    if (sigsetjmp(gClipJump, 1) == 0) {
+        RunClipJob(job);
+    } else {
+        job->Result = -2;
+        snprintf(job->Error, sizeof(job->Error), "Absturz, Signal %d", int(gClipSignal));
+    }
+    for (int i = 0; i < 4; i++) {
+        sigaction(sigs[i], &old[i], nullptr);
+    }
+}
+#else
+static void RunClipJobGuarded(ClipJob *job) { RunClipJob(job); }
+#endif
+
+static std::string ReadFirstLine(const fs::path &file) {
+    std::string line;
+    FILE *f = fopen(file.string().c_str(), "r");
+    if (f != nullptr) {
+        char buf[256];
+        if (fgets(buf, sizeof(buf), f) != nullptr) {
+            line = buf;
+        }
+        fclose(f);
+    }
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+    }
+    return line;
+}
+
+static void WriteText(const fs::path &file, const std::string &text, bool append) {
+    FILE *f = fopen(file.string().c_str(), append ? "a" : "w");
+    if (f != nullptr) {
+        fputs(text.c_str(), f);
+        fclose(f);
+    }
+}
+
+int HdVideoExport(const std::string &specIn, bool resume) {
     const std::string spec = Lower(specIn);
     std::map<std::string, std::set<std::string>> clips; // Clip -> Raeume
     std::map<std::string, std::set<std::string>> all;
@@ -290,28 +413,77 @@ int HdVideoExport(const std::string &specIn) {
         return -1;
     }
     const fs::path outRoot = fs::path((LPCTSTR)AppPath) / "hd_assets" / "original" / "video";
-    const fs::path done = outRoot / "export_fertig.txt"; // H29: daran erkennt HD_erzeugen.bat einen vollstaendigen Export
+    const fs::path done = outRoot / "export_fertig.txt"; // H29: daran erkennt HD_generate.bat einen vollstaendigen Export
+    const fs::path running = outRoot / "export_laeuft.txt"; // H29: Clip, der gerade exportiert wird
+    const fs::path failedFile = outRoot / "export_fehler.txt"; // H29: Clips mit Fehler, je Zeile "clip;grund"
     std::error_code ec;
     fs::create_directories(outRoot, ec);
     fs::remove(done, ec);
+
+    // H29: Fortsetzen. Steht noch ein Clip in export_laeuft.txt, ist der letzte Lauf dabei abgebrochen: als Fehler
+    // vermerken und ueberspringen. Clips mit Fehler und fertige Clips (frames.csv vorhanden) werden nicht wiederholt.
+    std::set<std::string> failed;
+    if (resume) {
+        const std::string crashed = ReadFirstLine(running);
+        if (!crashed.empty()) {
+            AT_Log_I("HD", "Video-Export %s: letzter Lauf ist dabei abgebrochen, Clip wird uebersprungen", crashed.c_str());
+            WriteText(failedFile, crashed + ";Programm beim Export beendet\n", true);
+        }
+        FILE *f = fopen(failedFile.string().c_str(), "r");
+        if (f != nullptr) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), f) != nullptr) {
+                std::string line = buf;
+                failed.insert(line.substr(0, line.find(';')));
+            }
+            fclose(f);
+        }
+    } else {
+        fs::remove(failedFile, ec);
+    }
+    fs::remove(running, ec);
     AT_Log_I("HD", "Video-Export: %d Clips nach %s", int(clips.size()), outRoot.string().c_str());
     long total = 0;
     int missing = 0;
+    int skipped = 0;
+    int errors = 0;
+    std::string errorList;
     for (const auto &[clip, rooms] : clips) {
-        const long n = ExportClip(clip, rooms, outRoot);
-        if (n < 0) {
+        const fs::path dir = outRoot / (clip + ".smk");
+        if (failed.count(clip) != 0) {
+            errors++;
+            errorList += "fehler_clip;" + clip + "\n";
+            continue;
+        }
+        if (resume && fs::exists(dir / "frames.csv", ec)) {
+            skipped++;
+            continue;
+        }
+        WriteText(running, clip + "\n", false);
+        ClipJob job{&clip, &rooms, &outRoot, 0, {0}};
+        RunClipJobGuarded(&job);
+        fs::remove(running, ec);
+        if (job.Result == -2) {
+            AT_Log_I("HD", "Video-Export %s: FEHLER (%s), Clip wird uebersprungen", clip.c_str(), job.Error);
+            WriteText(failedFile, clip + ";" + job.Error + "\n", true);
+            fs::remove_all(dir, ec);
+            errors++;
+            errorList += "fehler_clip;" + clip + "\n";
+        } else if (job.Result < 0) {
             missing++;
         } else {
-            total += n;
+            total += job.Result;
         }
     }
-    AT_Log_I("HD", "Video-Export fertig: %d Clips, %ld Bilder, %d Clips fehlen. Zaehlung: python3 tools/video_count.py %s",
-             int(clips.size()) - missing, total, missing, outRoot.string().c_str());
+    const int exported = int(clips.size()) - missing - errors;
+    AT_Log_I("HD", "Video-Export fertig: %d Clips (%d schon vorhanden), %ld neue Bilder, %d Clips fehlen, %d mit Fehler. Zaehlung: python3 tools/video_count.py %s",
+             exported, skipped, total, missing, errors, outRoot.string().c_str());
     FILE *f = fopen((done.string() + ".tmp").c_str(), "w");
     if (f != nullptr) {
-        fprintf(f, "auswahl;%s\nclips;%d\nbilder;%ld\nfehlen;%d\n", spec.c_str(), int(clips.size()) - missing, total, missing);
+        fprintf(f, "auswahl;%s\nclips;%d\nbilder;%ld\nfehlen;%d\nfehler;%d\n%s", spec.c_str(), exported, total, missing, errors,
+                errorList.c_str());
         fclose(f);
         fs::rename(done.string() + ".tmp", done, ec);
     }
-    return int(clips.size()) - missing;
+    return exported;
 }

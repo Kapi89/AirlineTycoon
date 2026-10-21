@@ -348,7 +348,7 @@ void CTakeOffApp::CLI(int argc, char *argv[]) {
             }
         }
 
-        // H29: --hd-export [auswahl] (fuer HD_erzeugen.bat): Animationen der Raeume exportieren und beenden
+        // H29: --hd-export [auswahl] (fuer HD_generate.bat): Animationen der Raeume exportieren und beenden
         if (stricmp(Argument, "--hd-export") == 0 || stricmp(Argument, "/hdexport") == 0) {
             gHdExportCli = "alle";
             if (i + 1 < argc && argv[i + 1][0] != '-' && argv[i + 1][0] != '/') {
@@ -533,7 +533,7 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
 
     // H29: per Startparameter exportieren und gleich beenden, ohne Fenster und ohne Aenderung an OptionHdVideoExport
     if (!gHdExportCli.empty()) {
-        const int clips = HdVideoExport(gHdExportCli);
+        const int clips = HdVideoExport(gHdExportCli, true);
         AT_Log_I("HD", "Video-Export per --hd-export beendet: %d Clips", clips);
         exit(clips >= 0 ? 0 : 2);
     }

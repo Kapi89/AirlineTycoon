@@ -217,7 +217,7 @@ jobs:
         name: ${{ steps.artifact-win.outputs.artifact-name || steps.artifact-linux.outputs.artifact-name }}
         path: ${{ steps.artifact-win.outputs.artifact-path || steps.artifact-linux.outputs.artifact-path }}
 
-  # H29: HD_erzeugen.bat einmal komplett auf einem Windows ohne Python durchspielen. Mit kuenstlichen Testdaten
+  # H29: HD_generate.bat einmal komplett auf einem Windows ohne Python durchspielen. Mit kuenstlichen Testdaten
   # (tools/hd_testdaten.py, keine Spieldaten); Modelle und Python-Pakete kommen wie beim Nutzer aus dem Netz.
   # Baut selbst (wie der Windows-Build oben), damit der Test nicht auf die anderen Plattformen wartet.
   hd-test:
@@ -265,10 +265,10 @@ jobs:
         $treffer | ForEach-Object { Write-Host "noch da: $($_.Source)" }
         if ($treffer.Count -gt 0) { throw 'Python ist noch auffindbar' }
 
-    - name: Run 1 - HD_erzeugen.bat -Nur schriften,stadtfotos
+    - name: Run 1 - HD_generate.bat -Nur schriften,stadtfotos
       shell: cmd
       run: |
-        call "C:\hdtest\Airline Tycoon Deluxe\HD_erzeugen.bat" -Ja -Behalten -Nur schriften,stadtfotos
+        call "C:\hdtest\Airline Tycoon Deluxe\HD_generate.bat" -Ja -Behalten -Nur schriften,stadtfotos
 
     - name: Check run 1
       run: |
@@ -287,22 +287,30 @@ jobs:
         if (Test-Path "$spiel\hd\gli\glstd.gli") { throw '-Nur nicht beachtet' }
         if (-not (Select-String -Path "$spiel\AT.json" -Pattern '"OptionRenderScale": 4' -Quiet)) { throw 'AT.json nicht eingestellt' }
 
-    - name: Run 2 - HD_erzeugen.bat (everything, resumes)
+    # Lauf 2 simuliert beim Export einen Absturz (dublase, muss abgefangen werden) und ein exit() (durede, AT.exe
+    # endet; das Skript muss neu starten und den Clip ueberspringen). so_gasmask.smk (Testdaten) brachte libsmacker
+    # zum Absturz und muss jetzt durchlaufen.
+    - name: Run 2 - HD_generate.bat (everything, resumes, simulated export failures)
       shell: cmd
+      env:
+        AT_HD_EXPORT_TEST: absturz:dublase,ende:durede
       run: |
-        call "C:\hdtest\Airline Tycoon Deluxe\HD_erzeugen.bat" -Ja
+        call "C:\hdtest\Airline Tycoon Deluxe\HD_generate.bat" -Ja
 
     - name: Check run 2
       run: |
         $spiel = 'C:\hdtest\Airline Tycoon Deluxe'
         foreach ($f in @('hd\gli\glstd.gli\MENU.png', 'hd\gli\glbrick.gli\BRICK1.png', 'hd\room\kiosk.gli\ZEITUNG.png',
-                         'hd\video\dukau.smk\0000.png', 'hd\video\dukau.smk\crop.csv', 'hd_erzeugen.log')) {
+                         'hd\video\dukau.smk\0000.png', 'hd\video\dukau.smk\crop.csv', 'hd_generate.log')) {
           if (-not (Test-Path "$spiel\$f")) { throw "fehlt: $f" }
         }
         if (Test-Path "$spiel\hd_assets") { throw 'Zwischendateien nicht geloescht' }
         if (Test-Path "$spiel\hd_tools\venv") { throw 'Python-Umgebung nicht geloescht' }
-        $log = Get-Content "$spiel\hd_erzeugen.log" -Raw
-        foreach ($t in @('Pakete schon installiert', 'vorhanden, Pruefsumme stimmt', 'Export fertig: 1 Clips', 'Fertig nach')) {
+        $log = Get-Content "$spiel\hd_generate.log" -Raw
+        foreach ($t in @('Packages already installed', 'present, checksum correct', 'exit code 3 (0x00000003)',
+                         'last 20 lines of debug.txt', 'Test-Ende', "It stopped at clip 'durede'", 'Export done: 2 clips',
+                         'could not be exported and stay in normal resolution: dublase, durede',
+                         'dublase;Absturz, Ausnahme-Code 0xC0000005', 'Done after')) {
           if ($log -notmatch [regex]::Escape($t)) { throw "Log enthaelt nicht: $t" }
         }
 
@@ -310,8 +318,8 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: hd_erzeugen-log
-        path: C:\hdtest\Airline Tycoon Deluxe\hd_erzeugen.log
+        name: hd_generate-log
+        path: C:\hdtest\Airline Tycoon Deluxe\hd_generate.log
 
   release:
     runs-on: ubuntu-latest

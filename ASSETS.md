@@ -21,8 +21,8 @@ Pruefung von Hand: `python3 tools/asset_guard.py`
 ## HD-Paket mit dem Generator erzeugen (ab 2.0.0)
 
 Schritt-fuer-Schritt-Anleitung fuer Spieler und Lizenzhinweise: siehe [README.md](README.md#hd-grafiken-ab-version-200-anleitung-auf-deutsch).
-Unter Windows erledigt `HD_erzeugen.bat` (neben `AT.exe`, Skript `hd_tools/HD_erzeugen.ps1`, im Repository
-`tools/`) alles mit einem Doppelklick, siehe [Ein-Klick-Skript](#ein-klick-skript-hd_erzeugenbat-h29). Von Hand:
+Unter Windows erledigt `HD_generate.bat` (neben `AT.exe`, Skript `hd_tools/HD_generate.ps1`, im Repository
+`tools/`) alles mit einem Doppelklick, siehe [Ein-Klick-Skript](#ein-klick-skript-hd_generatebat-h29). Von Hand:
 
 ```sh
 pip install -r tools/hdgen/requirements.txt
@@ -230,9 +230,9 @@ Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden hor
 (`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
 ist nicht noetig.
 
-### Ein-Klick-Skript HD_erzeugen.bat (H29)
+### Ein-Klick-Skript HD_generate.bat (H29)
 
-`tools/HD_erzeugen.bat` startet `tools/HD_erzeugen.ps1` (PowerShell 5.1, gehoert zu Windows 10/11) mit dem Ordner der
+`tools/HD_generate.bat` startet `tools/HD_generate.ps1` (PowerShell 5.1, gehoert zu Windows 10/11) mit dem Ordner der
 `.bat` als Spielordner. Der Build kopiert beides ins Release: die `.bat` neben `AT.exe`, das Skript mit Generator,
 Exportern und `hdgen/` nach `hd_tools/` (CMake, `POST_BUILD`). Schritte, jeder erkennt, was schon erledigt ist:
 
@@ -241,15 +241,16 @@ Exportern und `hdgen/` nach `hd_tools/` (CMake, `POST_BUILD`). Schritte, jeder e
 | 1 | `AT.exe` (Version >= 2.0.3), `gli/*.gli`, `misc/*.mcf`, `video/`, Schreibrecht, freier Platz (Warnung unter 15 GB) | - |
 | 2 | Python 3.10-3.13, 64 Bit: `py -0p`, PATH, `%LOCALAPPDATA%\Programs\Python`, Registry (PEP 514); sonst nach Rueckfrage `winget install Python.Python.3.12 --scope user` | eigene Umgebung vorhanden |
 | 3 | `hd_tools\venv`; mit `nvidia-smi` torch fuer die hoechste CUDA-Version, die der Treiber kann (cu130, cu128, cu126, cu118), sonst `cpu`; dann `hdgen/requirements.txt` | `venv\hd_pakete.txt` + Import-Test |
-| 4 | Modelle nach `models\`: Lizenzen anzeigen, nur nach `J` laden, SHA-256 pruefen (Quellen und Pruefsummen oben im Skript) | Datei mit richtiger SHA-256 |
-| 5 | `AT.exe --hd-export alle` (prueft vorher, ob die `AT.exe` den Parameter kennt), wartet und zaehlt die Clips | `export_fertig.txt` mit `auswahl;alle` |
-| 6 | `hd_generate.py SPIEL --alles --modelle models --nicht-fragen --log hd_erzeugen.log`, mit `--gpu`, wenn torch CUDA sieht, sonst `--threads` = Anzahl Kerne | Cache des Generators |
+| 4 | Modelle nach `models\`: Lizenzen anzeigen, nur nach `Y` (oder `J`) laden, SHA-256 pruefen (Quellen und Pruefsummen oben im Skript) | Datei mit richtiger SHA-256 |
+| 5 | `AT.exe --hd-export alle` (prueft vorher, ob die `AT.exe` den Parameter kennt), wartet und zaehlt die Clips. Endet `AT.exe` ohne `export_fertig.txt`: Exit-Code und die letzten 20 Zeilen von `debug.txt` ins Log; steht ein Clip in `export_laeuft.txt`, Neustart (bis zu 4 Starts, der Clip wird uebersprungen), sonst weiter ohne Animationen | `export_fertig.txt` mit `auswahl;alle`; fertige Clips (`frames.csv`) |
+| 6 | `hd_generate.py SPIEL --alles --modelle models --nicht-fragen --log hd_generate.log --english`, mit `--gpu`, wenn torch CUDA sieht, sonst `--threads` = Anzahl Kerne; ohne Animationen `--nur` mit den uebrigen Kategorien | Cache des Generators |
 | 7 | `AT.json`: `"OptionRenderScale": 4` (nur bei beendetem Spiel) | - |
 | 8 | fragt, ob `hd_assets` und `hd_tools\venv` geloescht werden sollen | - |
 
 Parameter: `-Nur LISTE` (Kategorien wie beim Generator), `-Cpu`, `-Ja` (alle Rueckfragen mit Ja, fuer Tests),
-`-Behalten` (nichts loeschen), `-NichtWarten`. Protokoll: `hd_erzeugen.log` im Spielordner (Skript und Generator;
-Fortschritt einmal pro Minute).
+`-Behalten` (nichts loeschen), `-NichtWarten`. Alle Meldungen, Rueckfragen und das Protokoll sind auf Englisch (H29b).
+Protokoll: `hd_generate.log` im Spielordner (Skript und Generator; Fortschritt einmal pro Minute). Am Ende nennt das
+Skript, was in normaler Aufloesung bleibt (z. B. Clips, deren Export scheiterte).
 
 4x-UltraSharp verteilt der Autor ueber einen Mega-Ordner, der sich nicht automatisch laden laesst. Das Skript laedt
 deshalb Kopien von Hugging Face und nimmt nur eine Datei mit der SHA-256 aus OpenModelDB, also Byte fuer Byte die
@@ -269,8 +270,23 @@ demselben Decoder wie im Spiel:
 
 Am einfachsten per Startparameter (H29): `AT.exe --hd-export alle` (oder Raeume/Clips wie unten, z. B.
 `AT.exe --hd-export duty,bank`) exportiert ohne Fenster, schreibt am Ende `hd_assets/original/video/export_fertig.txt`
-(Auswahl, Clips, Bilder, fehlende Clips) und beendet sich; Exit-Code 0, bzw. 2 wenn die Auswahl nichts trifft.
-`AT.json` bleibt dabei unveraendert. Alternativ ueber die Option:
+(Auswahl, Clips, neue Bilder, fehlende Clips, Clips mit Fehler als `fehler_clip;<name>`) und beendet sich; Exit-Code 0,
+bzw. 2 wenn die Auswahl nichts trifft. `AT.json` bleibt dabei unveraendert.
+
+Fehler je Clip (H29b): Vor jedem Clip steht dessen Name in `export_laeuft.txt`, und vor dem Dekodieren steht Groesse,
+Bildzahl und Y-Modus im Log. Ausnahmen und Speicherzugriffsfehler (unter Windows per SEH, sonst per Signal) beenden den
+Export nicht: der Clip kommt mit Grund nach `export_fehler.txt`, sein Ordner wird geloescht, weiter geht es mit dem
+naechsten. Endet das Programm trotzdem (z. B. `exit()` in libsmacker), ueberspringt der naechste Start mit
+`--hd-export` den Clip aus `export_laeuft.txt` und alle schon fertigen Clips (`frames.csv` vorhanden). Fuer den
+CI-Test simuliert die Umgebungsvariable `AT_HD_EXPORT_TEST="absturz:<clip>,ende:<clip>"` beides.
+
+libsmacker (H29b): Zwei Fehler im Decoder liessen `AT.exe` beim Export von `so_gasmask.smk` abstuerzen und betrafen
+auch das Abspielen im Spiel: Ein leerer Huffman-Baum fuehrte beim Nachschlagen zu einem Nullzeiger, und Bilder, deren
+Breite oder Hoehe kein Vielfaches von 4 ist, schrieben ueber das Ende des Bildpuffers. Leere Baeume liefern jetzt 0
+(wie in anderen Smacker-Decodern), der Bildpuffer hat 4 Spalten und Zeilen Reserve, und Paletten- und Audio-Bloecke
+mit unmoeglicher Laenge werden abgewiesen. `tools/hd_testdaten.py` erzeugt dazu eine kuenstliche `so_gasmask.smk`.
+
+Alternativ ueber die Option:
 
 1. In `AT.json` `"OptionHdVideoExport": "alle"` setzen, fuer einen Probelauf nur Raeume oder Clips, z. B. `"duty"`
    (Anfang des Raumnamens genuegt) oder `"dukau, durede"`. Raeume: arabair, aufsicht, bank, buero, designer,

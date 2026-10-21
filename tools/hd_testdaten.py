@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Erzeugt kuenstliche Testdaten im Format der Spieldaten (keine Spieldaten!) fuer den End-to-End-Test von HD_erzeugen.bat.
+"""Erzeugt kuenstliche Testdaten im Format der Spieldaten (keine Spieldaten!) fuer den End-to-End-Test von HD_generate.bat.
 
 Aufruf:
   python3 tools/hd_testdaten.py ZIELORDNER
@@ -10,7 +10,11 @@ Legt in ZIELORDNER an (alles aus Mustern gerechnet, nichts aus dem Spiel):
   gli/testa1.gli     ein "Stadtfoto" (Regel *1.gli)
   room/kiosk.gli     ein Raum-Hintergrund
   misc/*.mcf         Schriften fuer schrift_standard, schrift_projektion und schrift_bikubisch
-  video/dukau.flc    kurze Animation (Clip des Duty-free-Raums), fuer AT --hd-export
+  video/dukau.flc    kurze Animationen (Clips des Duty-free-Raums), fuer AT --hd-export;
+  video/dublase.flc  dublase und durede fuer den Test, dass ein Fehler je Clip den Export nicht beendet
+  video/durede.flc   (Umgebungsvariable AT_HD_EXPORT_TEST, siehe src/HdVideoExport.cpp)
+  video/so_gasmask.smk  Smacker-Datei ohne Huffman-Baeume, Hoehe kein Vielfaches von 4: brachte libsmacker zum
+                     Absturz (H29) und muss jetzt durchlaufen
 Die Dateien sind nur fuer den Test und duerfen nicht ins Git (der Asset-Guard verhindert das ohnehin).
 Keine Abhaengigkeiten ausser der Python-Standardbibliothek.
 """
@@ -103,6 +107,19 @@ def schreibe_flc(pfad, w, h, bilder):
         fh.write(kopf + frames)
 
 
+def schreibe_smk(pfad, w, h, bilder):
+    """Minimale Smacker-Datei (SMK2): alle vier Huffman-Baeume leer, keine Palette, je Bild 4 Byte Videodaten."""
+    os.makedirs(os.path.dirname(pfad), exist_ok=True)
+    baeume = bytes(1)  # vier Bits 0 = vier leere Baeume
+    chunk = bytes(4)
+    kopf = b"SMK2" + struct.pack("<IIIiI", w, h, bilder, 100, 0)
+    kopf += struct.pack("<7I", *([0] * 7)) + struct.pack("<I", len(baeume)) + struct.pack("<4I", 0, 0, 0, 0)
+    kopf += struct.pack("<7I", *([0] * 7)) + struct.pack("<I", 0)
+    kopf += struct.pack(f"<{bilder}I", *([len(chunk)] * bilder)) + bytes(bilder)
+    with open(pfad, "wb") as fh:
+        fh.write(kopf + baeume + chunk * bilder)
+
+
 def main():
     if len(sys.argv) != 2:
         print(__doc__)
@@ -117,6 +134,9 @@ def main():
     schreibe_mcf(os.path.join(ziel, "misc", "inkfont.mcf"), 8, 10, [(0, 0, 0), (0, 16, 82), (111, 123, 160), (222, 231, 239)])
     schreibe_mcf(os.path.join(ziel, "misc", "bank_bl.mcf"), 8, 10, [(0, 0, 0), (29, 29, 141), (140, 137, 137), (255, 245, 134)])
     schreibe_flc(os.path.join(ziel, "video", "dukau.flc"), 40, 32, 3)
+    schreibe_flc(os.path.join(ziel, "video", "dublase.flc"), 24, 20, 2)
+    schreibe_flc(os.path.join(ziel, "video", "durede.flc"), 24, 20, 2)
+    schreibe_smk(os.path.join(ziel, "video", "so_gasmask.smk"), 30, 18, 3)
     print(f"Testdaten (kuenstlich, keine Spieldaten) in {ziel}")
     return 0
 

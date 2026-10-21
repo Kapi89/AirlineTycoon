@@ -6,7 +6,7 @@ Aufruf:
   python3 tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur schriften
   python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu
   python3 tools/hd_generate.py SPIELORDNER --nur animationen --raum duty   # Animationen nur auf Wunsch, raumweise
-  python3 tools/hd_generate.py SPIELORDNER --alles --gpu --log hd_erzeugen.log  # alles inkl. Animationen (HD_erzeugen.bat)
+  python3 tools/hd_generate.py SPIELORDNER --alles --gpu --log hd_generate.log  # alles inkl. Animationen (HD_generate.bat)
 
 Der Datenordner (mit gli/) wird im angegebenen Ordner gesucht, auch tief in einem Mac-.app-Paket. Dort sucht das
 Spiel auch hd/, dorthin gehoert also auch die neue AT.exe bzw. AT. --gpu nutzt CUDA (NVIDIA) oder MPS (Apple-Chip).
@@ -73,6 +73,14 @@ MODELLE = {
         "wofuer": "Stadtfotos (Globus/Filofax, Laptop) und Figuren der Halle",
     },
 }
+
+
+EN = [False]  # --english (H29b): Meldungen auf Englisch, z. B. fuer HD_generate.bat
+
+
+def T(de, en):
+    """Meldung in der gewaehlten Sprache."""
+    return en if EN[0] else de
 
 
 # ---------------------------------------------------------------- Manifest und Regeln
@@ -196,11 +204,12 @@ def waehle_geraet(torch, gpu):
     if not gpu:
         return "cpu", None
     if torch.cuda.is_available():
-        return "cuda", f"Rechne auf der Grafikkarte (CUDA): {torch.cuda.get_device_name(0)}"
+        return "cuda", T("Rechne auf der Grafikkarte (CUDA): ", "Computing on the graphics card (CUDA): ") + torch.cuda.get_device_name(0)
     mps = getattr(torch.backends, "mps", None)
     if mps is not None and mps.is_available():
-        return "mps", "Rechne auf dem Apple-Grafikchip (MPS)"
-    return "cpu", "Hinweis: --gpu angegeben, aber weder CUDA noch MPS ist verfuegbar. Rechne auf der CPU."
+        return "mps", T("Rechne auf dem Apple-Grafikchip (MPS)", "Computing on the Apple graphics chip (MPS)")
+    return "cpu", T("Hinweis: --gpu angegeben, aber weder CUDA noch MPS ist verfuegbar. Rechne auf der CPU.",
+                    "Note: --gpu given, but neither CUDA nor MPS is available. Computing on the CPU.")
 
 
 def finde_modell(kuerzel, args, spiel, at_ordner):
@@ -236,17 +245,21 @@ def modelle_aufloesen(benoetigt, args, spiel, at_ordner):
     for k in sorted(benoetigt):
         p = finde_modell(k, args, spiel, at_ordner)
         while p is None and sys.stdin.isatty() and not args.nicht_fragen:
-            print(f"\nModell '{k}' nicht gefunden. Bitte selbst herunterladen:\n{modell_hinweis(k)}")
-            antwort = input("Pfad zur Modelldatei (leer = abbrechen): ").strip().strip('"')
+            print(T(f"\nModell '{k}' nicht gefunden. Bitte selbst herunterladen:\n{modell_hinweis(k)}",
+                    f"\nModel '{k}' not found. Please download it yourself:\n{modell_hinweis(k)}"))
+            antwort = input(T("Pfad zur Modelldatei (leer = abbrechen): ", "Path to the model file (empty = cancel): ")).strip().strip('"')
             if not antwort:
                 break
             p = antwort if os.path.isfile(antwort) else None
             if p is None:
-                print(f"Datei nicht gefunden: {antwort}")
+                print(T(f"Datei nicht gefunden: {antwort}", f"File not found: {antwort}"))
         if p is None:
-            print(f"\nFEHLER: Modell '{k}' fehlt. Bitte selbst herunterladen und in einen Ordner 'models/' legen "
-                  f"(neben die AT.exe, in den Spielordner oder ins aktuelle Verzeichnis) oder mit --{k} DATEI angeben:\n"
-                  f"{modell_hinweis(k)}\nDer Generator laedt nichts selbst herunter.", file=sys.stderr)
+            print(T(f"\nFEHLER: Modell '{k}' fehlt. Bitte selbst herunterladen und in einen Ordner 'models/' legen "
+                    f"(neben die AT.exe, in den Spielordner oder ins aktuelle Verzeichnis) oder mit --{k} DATEI angeben:\n"
+                    f"{modell_hinweis(k)}\nDer Generator laedt nichts selbst herunter.",
+                    f"\nERROR: model '{k}' is missing. Please download it and put it into a folder 'models/' (next to "
+                    f"AT.exe, in the game folder or the current folder) or pass --{k} FILE:\n{modell_hinweis(k)}\n"
+                    "The generator does not download anything itself."), file=sys.stderr)
             raise SystemExit(2)
         pfade[k] = os.path.abspath(p)
     return pfade
@@ -276,8 +289,8 @@ def exportieren(spiel, original, plan, kategorien):
                 n_bilder += n
             except (ValueError, struct.error) as exc:
                 fehler += 1
-                print(f"  {path}: FEHLER {exc}", file=sys.stderr)
-            fortschritt(f"Export Grafiken {i}/{len(archive)}: {rel}")
+                print(f"  {path}: {T('FEHLER', 'ERROR')} {exc}", file=sys.stderr)
+            fortschritt(T(f"Export Grafiken {i}/{len(archive)}: {rel}", f"Exporting graphics {i}/{len(archive)}: {rel}"))
         fortschritt_ende()
     if "schriften" in kategorien:
         for path in mcf_export.find_fonts([spiel], original):
@@ -289,7 +302,7 @@ def exportieren(spiel, original, plan, kategorien):
                 width, height, chars, rows = mcf_export.read_mcf(path)
             except (ValueError, struct.error) as exc:
                 fehler += 1
-                print(f"  {path}: FEHLER {exc}", file=sys.stderr)
+                print(f"  {path}: {T('FEHLER', 'ERROR')} {exc}", file=sys.stderr)
                 continue
             os.makedirs(os.path.dirname(out), exist_ok=True)
             mcf_export.write_png(out, width, height * chars, rows)
@@ -298,8 +311,10 @@ def exportieren(spiel, original, plan, kategorien):
     if "figuren" in kategorien:
         n_figuren, f = pol_export.export(spiel, original)
         fehler += f
-    print(f"Export: {n_bilder} Bilder, {n_schriften} Schriften und {n_figuren} Figuren neu exportiert"
-          + (f", {fehler} Dateien mit Fehler" if fehler else "") + ".")
+    print(T(f"Export: {n_bilder} Bilder, {n_schriften} Schriften und {n_figuren} Figuren neu exportiert"
+            + (f", {fehler} Dateien mit Fehler" if fehler else "") + ".",
+            f"Export: {n_bilder} images, {n_schriften} fonts and {n_figuren} figures newly exported"
+            + (f", {fehler} files with errors" if fehler else "") + "."))
     return fehler
 
 
@@ -400,19 +415,26 @@ def auftraege_sammeln(original, ziel, plan, kategorien, raeume=None):
             if a.kategorie in kategorien:
                 auftraege.append(a)
     if unbekannte_schriften:
-        print(f"Hinweis: {len(unbekannte_schriften)} Schrift(en) ohne Eintrag im Manifest, Verfahren schrift_standard: "
+        print(T(f"Hinweis: {len(unbekannte_schriften)} Schrift(en) ohne Eintrag im Manifest, Verfahren schrift_standard: ",
+                f"Note: {len(unbekannte_schriften)} font(s) without manifest entry, method schrift_standard: ")
               + ", ".join(unbekannte_schriften))
     if "animationen" not in kategorien and os.path.isdir(os.path.join(original, "video")):
-        print("Hinweis: Animationen (Video-Export vorhanden) gehoeren nicht zum Standardumfang: "
-              "--alles oder --nur animationen [--raum <name>]")
+        print(T("Hinweis: Animationen (Video-Export vorhanden) gehoeren nicht zum Standardumfang: "
+                "--alles oder --nur animationen [--raum <name>]",
+                "Note: animations (video export present) are not part of the default scope: "
+                "--alles or --nur animationen [--raum <name>]"))
     if "animationen" in kategorien:
         nclips = len([c for c in clips.values() if c]) - len(andere_raeume)
         if not clips:
-            print(f"Hinweis: kein Video-Export in {os.path.join(original, 'video')}. Die Animationen exportiert das Spiel "
-                  "selbst: AT.exe --hd-export alle (oder Raeume) starten; HD_erzeugen.bat macht das automatisch.")
+            print(T(f"Hinweis: kein Video-Export in {os.path.join(original, 'video')}. Die Animationen exportiert das Spiel "
+                    "selbst: AT.exe --hd-export alle (oder Raeume) starten; HD_generate.bat macht das automatisch.",
+                    f"Note: no video export in {os.path.join(original, 'video')}. The game exports the animations itself: "
+                    "run AT.exe --hd-export alle (or rooms); HD_generate.bat does this automatically."))
         else:
-            print(f"Animationen: {nclips} Clips" + (f" (Raum {', '.join(raeume)})" if raeume else "")
-                  + (f", {leer} leere Bilder bleiben 1x" if leer else ""))
+            print(T(f"Animationen: {nclips} Clips" + (f" (Raum {', '.join(raeume)})" if raeume else "")
+                    + (f", {leer} leere Bilder bleiben 1x" if leer else ""),
+                    f"Animations: {nclips} clips" + (f" (room {', '.join(raeume)})" if raeume else "")
+                    + (f", {leer} empty frames stay 1x" if leer else "")))
     auftraege.sort(key=lambda a: (KATEGORIEN.index(a.kategorie), a.rel))
     return auftraege
 
@@ -602,43 +624,51 @@ def main():
                     help="Hallen-Bausteine wie vor H29 mit colorkey_rgba (Kante per Lanczos); "
                          "vorhandene Bausteine werden dann neu gerechnet")
     ap.add_argument("--log", help="Ausgaben zusaetzlich an diese Datei anhaengen (Fortschritt einmal pro Minute)")
+    ap.add_argument("--english", action="store_true", help="Meldungen auf Englisch (fuer HD_generate.bat)")
     ARGS = args = ap.parse_args()
+    EN[0] = args.english
     if args.log:
         log_starten(args.log)
 
     if args.alles and args.nur:
-        raise SystemExit("--alles und --nur schliessen sich aus")
+        raise SystemExit(T("--alles und --nur schliessen sich aus", "--alles and --nur cannot be combined"))
     if args.alles:
         kategorien = set(KATEGORIEN)
     elif args.nur:
         kategorien = {k.strip() for k in args.nur.split(",") if k.strip()}
         falsch = kategorien - set(KATEGORIEN)
         if falsch:
-            raise SystemExit(f"--nur: unbekannte Kategorie {', '.join(sorted(falsch))} (erlaubt: {', '.join(KATEGORIEN)})")
+            raise SystemExit(T("--nur: unbekannte Kategorie ", "--nur: unknown category ") + ", ".join(sorted(falsch))
+                             + T(" (erlaubt: ", " (allowed: ") + ", ".join(KATEGORIEN) + ")")
     else:
         kategorien = set(KATEGORIEN) - NUR_AUF_WUNSCH
     raeume = [r.strip().lower() for r in args.raum.split(",") if r.strip()] if args.raum else None
     if raeume and "animationen" not in kategorien:
-        print("Hinweis: --raum gilt nur fuer die Animationen (--nur animationen)")
+        print(T("Hinweis: --raum gilt nur fuer die Animationen (--nur animationen)", "Note: --raum only applies to animations (--nur animationen)"))
 
     spiel = os.path.abspath(os.path.expanduser(args.spiel))
     if not os.path.isdir(spiel):
-        raise SystemExit(f"Spielordner nicht gefunden: {spiel}")
+        raise SystemExit(T(f"Spielordner nicht gefunden: {spiel}", f"Game folder not found: {spiel}"))
     if args.gpu:
         os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")  # vor dem Import von torch: fehlende MPS-Operationen auf der CPU
     daten = finde_datenordner(spiel)
     if daten is None:
-        raise SystemExit(f"Keine Spieldaten gefunden (Ordner gli/ mit .gli-Dateien) in {spiel}")
+        raise SystemExit(T(f"Keine Spieldaten gefunden (Ordner gli/ mit .gli-Dateien) in {spiel}",
+                           f"No game data found (folder gli/ with .gli files) in {spiel}"))
     at_ordner = daten
     if not args.ausgabe and not hat_at(daten):
-        print(f"Hinweis: Im Datenordner liegt noch keine AT.exe bzw. AT. Das Spiel sucht hd/ neben dem Programm; "
-              f"die neue AT.exe bzw. AT gehoert deshalb in diesen Ordner: {daten}")
+        print(T(f"Hinweis: Im Datenordner liegt noch keine AT.exe bzw. AT. Das Spiel sucht hd/ neben dem Programm; "
+                f"die neue AT.exe bzw. AT gehoert deshalb in diesen Ordner: {daten}",
+                f"Note: there is no AT.exe or AT in the data folder yet. The game looks for hd/ next to the program, "
+                f"so the new AT.exe or AT belongs into this folder: {daten}"))
     spiel = daten  # nur aus dem Datenordner exportieren (das Mac-Bundle enthaelt mehr als die Spieldaten)
     ziel = os.path.abspath(os.path.expanduser(args.ausgabe) if args.ausgabe else os.path.join(at_ordner, "hd"))
     arbeit = os.path.abspath(os.path.expanduser(args.arbeit) if args.arbeit else os.path.join(os.path.dirname(ziel), "hd_assets"))
     original = os.path.join(arbeit, "original")
 
-    print(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {', '.join(k for k in KATEGORIEN if k in kategorien)}")
+    umfang = ", ".join(k for k in KATEGORIEN if k in kategorien)
+    print(T(f"Spiel:   {spiel}\nAusgabe: {ziel}\nArbeit:  {arbeit}\nUmfang:  {umfang}",
+            f"Game:    {spiel}\nOutput:  {ziel}\nWork:    {arbeit}\nScope:   {umfang}"))
     plan = Plan(bausteine_modellkante=args.bausteine_modellkante)
     fehler = exportieren(spiel, original, plan, kategorien)
     auftraege = auftraege_sammeln(original, ziel, plan, kategorien, raeume)
@@ -654,8 +684,10 @@ def main():
     fehlend = [a for a in auftraege if not os.path.exists(a.ziel)]
     veraltet = [a for a in auftraege if os.path.exists(a.ziel) and (cache.veraltet(a.rel, a.schluessel()) or falsche_groesse(a))]
     offen = sorted(fehlend + veraltet, key=lambda a: (KATEGORIEN.index(a.kategorie), a.rel))
-    print(f"{len(auftraege)} Bilder, davon {len(auftraege) - len(offen)} schon vorhanden, {len(offen)} offen"
-          + (f" ({len(veraltet)} neu: Verfahren oder Zuschnitt geaendert)" if veraltet else "") + ".")
+    print(T(f"{len(auftraege)} Bilder, davon {len(auftraege) - len(offen)} schon vorhanden, {len(offen)} offen"
+            + (f" ({len(veraltet)} neu: Verfahren oder Zuschnitt geaendert)" if veraltet else "") + ".",
+            f"{len(auftraege)} images, {len(auftraege) - len(offen)} already done, {len(offen)} to do"
+            + (f" ({len(veraltet)} again: method or crop changed)" if veraltet else "") + "."))
     if args.liste or not offen:
         return 1 if fehler else 0
 
@@ -664,19 +696,21 @@ def main():
         import numpy as np
         import PIL  # noqa: F401
     except ImportError as exc:
-        raise SystemExit(f"Fehlendes Python-Paket ({exc.name}). Bitte: pip install -r tools/hdgen/requirements.txt")
+        raise SystemExit(T(f"Fehlendes Python-Paket ({exc.name}). Bitte: pip install -r tools/hdgen/requirements.txt",
+                           f"Missing Python package ({exc.name}). Please run: pip install -r tools/hdgen/requirements.txt"))
     benoetigt = {a.modell for a in offen if a.modell}
     if benoetigt:
         try:
             import torch
             import spandrel  # noqa: F401
         except ImportError as exc:
-            raise SystemExit(f"Fehlendes Python-Paket ({exc.name}). Bitte: pip install -r tools/hdgen/requirements.txt")
+            raise SystemExit(T(f"Fehlendes Python-Paket ({exc.name}). Bitte: pip install -r tools/hdgen/requirements.txt",
+                           f"Missing Python package ({exc.name}). Please run: pip install -r tools/hdgen/requirements.txt"))
     import hd_methods as hm
 
     modelle = modelle_aufloesen(benoetigt, args, spiel, at_ordner)
     for k, p in sorted(modelle.items()):
-        print(f"Modell {k}: {p}\n  SHA-256 {sha256(p)}")
+        print(f"{T('Modell', 'Model')} {k}: {p}\n  SHA-256 {sha256(p)}")
 
     # Deterministisch: feste Seeds, deterministische Algorithmen, feste Thread-Zahl
     random.seed(0)
@@ -693,8 +727,10 @@ def main():
         if meldung:
             print(meldung)
         if hm.DEVICE == "cpu":
-            print(f"Rechne auf der CPU mit {args.threads} Threads. Das ganze Paket dauert so viele Stunden; "
-                  "Abbruch mit Strg+C, ein neuer Start setzt fort.")
+            print(T(f"Rechne auf der CPU mit {args.threads} Threads. Das ganze Paket dauert so viele Stunden; "
+                    "Abbruch mit Strg+C, ein neuer Start setzt fort.",
+                    f"Computing on the CPU with {args.threads} threads. The whole package takes many hours; "
+                    "stop with Ctrl+C, the next start resumes."))
 
     start = time.time()
     gerechnet = kopiert = 0
@@ -713,7 +749,7 @@ def main():
                     img = rechnen(a, hm, modelle)
                 except Exception as exc:  # ein kaputtes Bild soll den Lauf nicht beenden
                     fortschritt_ende()
-                    print(f"FEHLER {a.rel} ({a.verfahren}): {exc}", file=sys.stderr)
+                    print(f"{T('FEHLER', 'ERROR')} {a.rel} ({a.verfahren}): {exc}", file=sys.stderr)
                     fehler += 1
                     continue
                 speichern(img, a.ziel)
@@ -722,16 +758,22 @@ def main():
                 rechenzeit += time.time() - t0
             rest = len(offen) - i
             eta = rechenzeit / gerechnet * rest if gerechnet else 0
-            fortschritt(f"[{i}/{len(offen)}] {100 * i // len(offen)}% | gerechnet {gerechnet}, aus Cache {kopiert} | "
-                        f"Rest ca. {dauer(eta)} | {a.rel}")
+            fortschritt(f"[{i}/{len(offen)}] {100 * i // len(offen)}% | "
+                        + T(f"gerechnet {gerechnet}, aus Cache {kopiert} | Rest ca. {dauer(eta)}",
+                            f"computed {gerechnet}, from cache {kopiert} | remaining approx. {dauer(eta)}")
+                        + f" | {a.rel}")
     except KeyboardInterrupt:
         fortschritt_ende()
-        print(f"Abgebrochen. {gerechnet} gerechnet, {kopiert} aus dem Cache. Ein neuer Start setzt fort.")
+        print(T(f"Abgebrochen. {gerechnet} gerechnet, {kopiert} aus dem Cache. Ein neuer Start setzt fort.",
+                f"Stopped. {gerechnet} computed, {kopiert} from cache. The next start resumes."))
         return 130
     fortschritt_ende()
-    print(f"Fertig in {dauer(time.time() - start)}: {gerechnet} gerechnet, {kopiert} aus dem Cache kopiert"
-          + (f", {fehler} Fehler" if fehler else "") + f".\nHD-Paket: {ziel}")
-    print("Im Spiel: in AT.json \"OptionRenderScale\": 4 setzen (siehe ASSETS.md).")
+    print(T(f"Fertig in {dauer(time.time() - start)}: {gerechnet} gerechnet, {kopiert} aus dem Cache kopiert"
+            + (f", {fehler} Fehler" if fehler else "") + f".\nHD-Paket: {ziel}",
+            f"Done in {dauer(time.time() - start)}: {gerechnet} computed, {kopiert} copied from cache"
+            + (f", {fehler} errors" if fehler else "") + f".\nHD package: {ziel}"))
+    print(T("Im Spiel: in AT.json \"OptionRenderScale\": 4 setzen (siehe ASSETS.md).",
+            "In the game: set \"OptionRenderScale\": 4 in AT.json (see ASSETS.md)."))
     return 1 if fehler else 0
 
 
@@ -740,5 +782,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         fortschritt_ende()
-        print("Abgebrochen. Ein neuer Start setzt fort.")
+        print(T("Abgebrochen. Ein neuer Start setzt fort.", "Stopped. The next start resumes."))
         sys.exit(130)
