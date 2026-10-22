@@ -23,8 +23,19 @@ Deutsche Anleitung zu den HD-Grafiken: [README.de.md](README.de.md)
 5. Start `AT.exe` – the game now runs in widescreen, and in HD if you did step 4.
 
 The HD files are for private use only and must not be shared. The two AI models used to create them have their own
-licenses (one of them, 4x-UltraSharp, is non-commercial only). macOS, Linux and the manual way for advanced users are
-described in [HD graphics](#hd-graphics) below.
+licenses (one of them, 4x-UltraSharp, is non-commercial only). The manual way for advanced users is described in
+[HD graphics](#hd-graphics) below.
+
+## Quick start (Linux and macOS)
+
+1. Own and install Airline Tycoon Deluxe, download the Linux or macOS archive (`AT-<version>-linux.tar` / `-macos.tar`) from the
+   [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest) and unpack it into the game folder (the
+   folder with `gli`, `room` and `misc`; on the Mac inside the `.app` bundle, see [macOS](#macos)).
+2. Optional HD: in a terminal in the game folder run `./HD_generate.sh` (on the Mac you can also double-click
+   `HD_generate.command`) and confirm with `Y`. It works like the Windows script: it finds or offers to install
+   Python, downloads the models after you accept their licenses and builds the HD files. Stop with Ctrl+C, run it
+   again to continue.
+3. Start `./AT`.
 
 ## Major Additions
 
@@ -95,6 +106,26 @@ about 15 GB during the run, afterwards mainly `hd` remains. If something goes wr
 
 If the game is installed below `C:\Program Files`, not every user may write there: right-click `HD_generate.bat` and
 choose "Run as administrator".
+
+### Linux and macOS: HD_generate.sh
+
+`HD_generate.sh` lies next to `AT` in the Linux and macOS release (on the Mac also `HD_generate.command` for a
+double-click in the Finder). It does the same 8 steps as the Windows script, with the same log file
+`hd_generate.log`:
+
+- Python 3.10 to 3.14 with the module `venv`: if it is missing, the script offers to install it with the package
+  manager (`apt`, `dnf`, `pacman`, `zypper`; asks for your password via `sudo`) or on the Mac with Homebrew, otherwise
+  it tells you what to install.
+- `torch`: on Linux with an NVIDIA card the CUDA build that fits the driver, otherwise the CPU build; on a Mac with
+  Apple silicon the normal build, which computes on the Apple graphics chip (MPS). Macs with Intel processors are not
+  supported by current `torch` versions (see the manual way below).
+- The animations are exported with `./AT --hd-export alle`; no display is needed.
+- Options: `--yes` (answer everything with yes), `--only schriften,stadtfotos`, `--cpu`, `--keep` (delete nothing at
+  the end), `--game FOLDER`.
+
+On the Mac, `AT`, `HD_generate.sh` and the folder `hd_tools` must be in the data folder inside the `.app` bundle (see
+[macOS](#macos)). If macOS refuses to open `HD_generate.command` or `AT` because they were downloaded from the internet,
+right-click and choose "Open" once; the script also offers to remove this block for `AT`.
 
 ### For advanced users: manual way (Windows, Linux, macOS)
 
@@ -218,8 +249,8 @@ Only edit `AT.json` while the game is closed: the game rewrites the file when it
 
 ### Linux
 
-Use the manual way above: `./AT --hd-export alle`, then `python3 tools/hd_generate.py <game folder> --alles --gpu`
-(CUDA with an NVIDIA card).
+Easiest is `./HD_generate.sh` (see above). By hand: `./AT --hd-export alle`, then
+`python3 tools/hd_generate.py <game folder> --alles --gpu` (CUDA with an NVIDIA card).
 
 Technical details (methods, manifest, file names) are in [ASSETS.md](ASSETS.md).
 
@@ -233,6 +264,10 @@ git submodule update --init
 You can see the instructions to build and run the project in [BUILDING.md](BUILDING.md).
 
 ## Changes
+
+### Version 2.0.5
+* One-click HD on Linux and macOS: `HD_generate.sh` next to `AT` (on the Mac also `HD_generate.command` for a
+  double-click), the same steps and log as `HD_generate.bat` on Windows. Tested in CI on Ubuntu and macOS 15.
 
 ### Version 2.0.4
 * One-click HD on Windows: `HD_generate.bat` (next to `AT.exe`) checks the game folder, installs Python with `winget`

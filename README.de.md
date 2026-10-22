@@ -50,6 +50,22 @@ Datei `hd_generate.log` im Spielordner mitschicken.
 Liegt das Spiel unter `C:\Program Files`, darf dort nicht jeder schreiben: dann `HD_generate.bat` per Rechtsklick
 "Als Administrator ausfuehren".
 
+### Linux und macOS: HD_generate.sh
+
+Im Linux- und macOS-Release liegt `HD_generate.sh` neben `AT` (auf dem Mac zusaetzlich `HD_generate.command` fuer
+einen Doppelklick im Finder). Es macht dieselben 8 Schritte wie das Windows-Skript und schreibt dasselbe Protokoll
+`hd_generate.log`. Im Terminal im Spielordner `./HD_generate.sh` starten und mit `Y` bestaetigen:
+
+- Python 3.10 bis 3.14 mit dem Modul `venv`; fehlt es, bietet das Skript die Installation ueber die Paketverwaltung
+  an (`apt`, `dnf`, `pacman`, `zypper`, per `sudo`) bzw. auf dem Mac ueber Homebrew, sonst nennt es, was fehlt.
+- `torch`: unter Linux mit NVIDIA-Karte die passende CUDA-Fassung, sonst die CPU-Fassung; auf dem Mac mit Apple-Chip
+  die normale Fassung, die auf dem Grafikchip (MPS) rechnet. Macs mit Intel-Prozessor unterstuetzt `torch` nicht mehr.
+- Optionen: `--yes`, `--only schriften,stadtfotos`, `--cpu`, `--keep`, `--game ORDNER`.
+
+Auf dem Mac gehoeren `AT`, `HD_generate.sh` und `hd_tools` in den Datenordner im `.app`-Paket (siehe macOS unten).
+Verweigert macOS das Oeffnen, einmal per Rechtsklick "Oeffnen" waehlen; fuer `AT` bietet das Skript an, die Sperre
+zu entfernen.
+
 ### Fuer Fortgeschrittene: von Hand (Windows, Linux, macOS)
 
 1. **Spiel und die neueste Version installieren** wie unter [Installation](README.md#installation) beschrieben. Die neue
