@@ -340,6 +340,25 @@ jobs:
         target_commitish: ${{ github.sha }}
         name: ${{ needs.env.outputs.release-name }}
         tag_name: ${{ needs.env.outputs.release-tag }}
-        prerelease: ${{ github.ref_name == 'develop' }}
+        # Nur das Release von master ist ein richtiges Release und "Latest"; Vorabversionen von develop und von
+        # Branches sind Pre-releases, damit "Latest release" auf GitHub nie auf eine Vorabversion zeigt.
+        prerelease: ${{ github.ref != 'refs/heads/master' }}
+        make_latest: ${{ github.ref == 'refs/heads/master' }}
         files: |
           ${{ needs.env.outputs.artifact-dir }}/${{ needs.env.outputs.artifact-name }}*
+
+    # Aeltere Vorabversionen (Tag mit Bindestrich, z. B. v2.0.3-<sha> oder v2.0.3-preview), die noch nicht als
+    # Pre-release markiert sind, beim Release von master nachtraeglich als Pre-release markieren.
+    - name: Mark older preview builds as pre-release
+      if: github.ref == 'refs/heads/master'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        gh api --paginate "repos/$REPO/releases?per_page=100" \
+          --jq '.[] | select(.prerelease == false and .draft == false and (.tag_name | test("-"))) | "\(.id) \(.tag_name)"' |
+        while read -r id tag; do
+          gh api -X PATCH "repos/$REPO/releases/$id" -F prerelease=true -f make_latest=false > /dev/null
+          echo "Pre-release: $tag"
+        done
+        echo "Latest: $(gh api "repos/$REPO/releases/latest" --jq .tag_name)"

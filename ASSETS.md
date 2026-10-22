@@ -20,7 +20,7 @@ Pruefung von Hand: `python3 tools/asset_guard.py`
 
 ## HD-Paket mit dem Generator erzeugen (ab 2.0.0)
 
-Schritt-fuer-Schritt-Anleitung fuer Spieler und Lizenzhinweise: siehe [README.md](README.md#hd-grafiken-ab-version-200-anleitung-auf-deutsch).
+Schritt-fuer-Schritt-Anleitung fuer Spieler und Lizenzhinweise: siehe [README.de.md](README.de.md) (Deutsch) bzw. [README.md](README.md#hd-graphics) (Englisch).
 Unter Windows erledigt `HD_generate.bat` (neben `AT.exe`, Skript `hd_tools/HD_generate.ps1`, im Repository
 `tools/`) alles mit einem Doppelklick, siehe [Ein-Klick-Skript](#ein-klick-skript-hd_generatebat-h29). Von Hand:
 
