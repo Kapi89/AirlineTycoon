@@ -21,13 +21,16 @@ Pruefung von Hand: `python3 tools/asset_guard.py`
 ## HD-Paket mit dem Generator erzeugen (ab 2.0.0)
 
 Schritt-fuer-Schritt-Anleitung fuer Spieler und Lizenzhinweise: siehe [README.md](README.md#hd-grafiken-ab-version-200-anleitung-auf-deutsch).
-Kurz:
+Unter Windows erledigt `HD_generate.bat` (neben `AT.exe`, Skript `hd_tools/HD_generate.ps1`, im Repository
+`tools/`) alles mit einem Doppelklick, siehe [Ein-Klick-Skript](#ein-klick-skript-hd_generatebat-h29). Von Hand:
 
 ```sh
 pip install -r tools/hdgen/requirements.txt
-python3 tools/hd_generate.py /pfad/zum/spiel                 # alles
-python3 tools/hd_generate.py /pfad/zum/spiel --nur schriften   # oder stadtfotos, ui, raeume, bausteine, figuren
-python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum duty   # Raum-Animationen (Export vorher im Spiel, H25a)
+AT.exe --hd-export alle                                          # Raum-Animationen exportieren (H25a/H29)
+python3 tools/hd_generate.py /pfad/zum/spiel --alles             # alles inkl. Animationen
+python3 tools/hd_generate.py /pfad/zum/spiel                     # alles ausser Animationen
+python3 tools/hd_generate.py /pfad/zum/spiel --nur schriften     # oder stadtfotos, ui, raeume, bausteine, figuren
+python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum duty   # Raum-Animationen raumweise
 ```
 
 Lizenz in einem Satz: Spiel selbst kaufen, das erzeugte Paket nur privat nutzen und nicht weitergeben,
@@ -59,7 +62,7 @@ Cache bleiben unangetastet.
 | `deckend_rgb` | Raum-Hintergruende | Modell auf das ganze Bild, RGB |
 | `deckend_rgba` | deckend gezeichnete Sprites | Modell, Alpha 255 |
 | `colorkey_rgba` | Sprites mit Colorkey, UI, Kiosk, Hallen-Bausteine | Schwarz = durchsichtig; Loecher aus Nachbarn auffuellen, Modell; Alpha = Lanczos-Maske, geschaerft |
-| `colorkey_rgba_modellkante` | Hallen-Bausteine mit `--bausteine-modellkante` (H24) | wie `colorkey_rgba`, aber Alpha wie `figur_rgba`: Binaermaske mit 4 px Rand per Modell vergroessert, geschaerft (gain 2.0); glattere Raender statt Lanczos-Treppen |
+| `colorkey_rgba_modellkante` | Hallen-Bausteine (H24, Standard seit H29; `--bausteine-lanczos` = `colorkey_rgba`) | wie `colorkey_rgba`, aber Alpha wie `figur_rgba`: Binaermaske mit 4 px Rand per Modell vergroessert, geschaerft (gain 2.0); glattere Raender statt Lanczos-Treppen |
 | `foto_rgb` | Stadtfotos `gli/*1.gli`, `gli/*1.glj` | Modell `x4plus` am Stueck (ohne Kacheln), RGB, reines Schwarz -> (1,1,1) |
 | `figur_rgba` | Figuren der Halle `gli/*.pol/*` (H21b) | Modell `x4plus`; Maske aus dem Alpha des Exports (Schwarz bleibt deckend), Loecher auffuellen, Farbe per Modell; Alpha = Binaermaske mit 4 px Rand per Modell vergroessert, geschaerft (gain 2.0) |
 | `auto` | alles ohne Eintrag | `colorkey_rgba`, wenn das Bild reines Schwarz enthaelt, sonst `deckend_rgba` |
@@ -72,10 +75,10 @@ Bilder kleiner als 4 px werden pixelgenau vergroessert. Kategorien fuer `--nur`:
 `stadtfotos` (Verfahren `foto_rgb`), `bausteine` (`gli/glbrick*`), `raeume` (alles unter `room/`), `figuren` (`.pol`,
 Ausgabe `hd/gli/<pool>.pol/<ID>.png`), `ui` (der Rest).
 
-`--bausteine-modellkante` (H24): Die Hallen-Bausteine (Pflanzen usw.) bekommen `colorkey_rgba_modellkante` statt
-`colorkey_rgba`. Die Farbe bleibt gleich, nur die Kante wird per Modell gerechnet. Vorhandene Bausteine erkennt der
-Cache als veraltet und rechnet sie neu (z. B. `--nur bausteine --bausteine-modellkante`); ohne die Option wieder
-zurueck. Die Engine braucht dafuer nichts Neues.
+Hallen-Bausteine (H24, seit H29 Standard): Die Bausteine (Pflanzen usw.) bekommen `colorkey_rgba_modellkante` statt
+`colorkey_rgba`. Die Farbe bleibt gleich, nur die Kante wird per Modell gerechnet. `--bausteine-lanczos` rechnet sie
+wie vor H29 (`--bausteine-modellkante` ist weiter erlaubt und aendert nichts). Vorhandene Bausteine mit dem jeweils
+anderen Verfahren erkennt der Cache als veraltet und rechnet sie neu. Die Engine braucht dafuer nichts Neues.
 
 ### Modelle
 
@@ -87,6 +90,8 @@ zurueck. Die Engine braucht dafuer nichts Neues.
 Gesucht wird in `--modelle`, dann in `models/` im aktuellen Verzeichnis, im Repository, neben der `AT.exe` und im
 Spielordner. Fehlt ein Modell, fragt der Generator nach dem Pfad bzw. nennt Quelle und Lizenz und bricht ab; er
 laedt nichts herunter. Zu jedem Modell steht die SHA-256 im Lauf, damit sich Ergebnisse vergleichen lassen.
+Erwartet (OpenModelDB bzw. Release der Autoren): `4x-UltraSharp.pth` `a5812231fc936b42af08a5edba784195495d303d5b3248c24489ef0c4021fe01`,
+`RealESRGAN_x4plus.pth` `4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1`.
 Geladen wird mit `spandrel`, gerechnet mit `torch`, kachelweise (128 px, Rand 8 px); die Stadtfotos am Stueck.
 
 ### Reproduzierbarkeit
@@ -225,11 +230,63 @@ Gegenspieler im Dialog (auch per Handy und waehrend der Mundbewegung) werden hor
 (`SDL_RenderCopyEx`); die 1x-Referenz nutzt dieselbe gespiegelte 1x-Kopie wie das Spiel. Eine eigene gespiegelte PNG
 ist nicht noetig.
 
+### Ein-Klick-Skript HD_generate.bat (H29)
+
+`tools/HD_generate.bat` startet `tools/HD_generate.ps1` (PowerShell 5.1, gehoert zu Windows 10/11) mit dem Ordner der
+`.bat` als Spielordner. Der Build kopiert beides ins Release: die `.bat` neben `AT.exe`, das Skript mit Generator,
+Exportern und `hdgen/` nach `hd_tools/` (CMake, `POST_BUILD`). Schritte, jeder erkennt, was schon erledigt ist:
+
+| Schritt | Was | Fortsetzen |
+|---|---|---|
+| 1 | `AT.exe` (Version >= 2.0.3), `gli/*.gli`, `misc/*.mcf`, `video/`, Schreibrecht, freier Platz (Warnung unter 15 GB) | - |
+| 2 | Python 3.10-3.13, 64 Bit: `py -0p`, PATH, `%LOCALAPPDATA%\Programs\Python`, Registry (PEP 514); sonst nach Rueckfrage `winget install Python.Python.3.12 --scope user` | eigene Umgebung vorhanden |
+| 3 | `hd_tools\venv`; mit `nvidia-smi` torch fuer die hoechste CUDA-Version, die der Treiber kann (cu130, cu128, cu126, cu118), sonst `cpu`; dann `hdgen/requirements.txt` | `venv\hd_pakete.txt` + Import-Test |
+| 4 | Modelle nach `models\`: Lizenzen anzeigen, nur nach `Y` (oder `J`) laden, SHA-256 pruefen (Quellen und Pruefsummen oben im Skript) | Datei mit richtiger SHA-256 |
+| 5 | `AT.exe --hd-export alle` (prueft vorher, ob die `AT.exe` den Parameter kennt), wartet und zaehlt die Clips. Endet `AT.exe` ohne `export_fertig.txt`: Exit-Code und die letzten 20 Zeilen von `debug.txt` ins Log; steht ein Clip in `export_laeuft.txt`, Neustart (bis zu 4 Starts, der Clip wird uebersprungen), sonst weiter ohne Animationen | `export_fertig.txt` mit `auswahl;alle`; fertige Clips (`frames.csv`) |
+| 6 | `hd_generate.py SPIEL --alles --modelle models --nicht-fragen --log hd_generate.log --english`, mit `--gpu`, wenn torch CUDA sieht, sonst `--threads` = Anzahl Kerne; ohne Animationen `--nur` mit den uebrigen Kategorien | Cache des Generators |
+| 7 | `AT.json`: `"OptionRenderScale": 4` (nur bei beendetem Spiel) | - |
+| 8 | fragt, ob `hd_assets` und `hd_tools\venv` geloescht werden sollen | - |
+
+Parameter: `-Nur LISTE` (Kategorien wie beim Generator), `-Cpu`, `-Ja` (alle Rueckfragen mit Ja, fuer Tests),
+`-Behalten` (nichts loeschen), `-NichtWarten`. Alle Meldungen, Rueckfragen und das Protokoll sind auf Englisch (H29b).
+Protokoll: `hd_generate.log` im Spielordner (Skript und Generator; Fortschritt einmal pro Minute). Am Ende nennt das
+Skript, was in normaler Aufloesung bleibt (z. B. Clips, deren Export scheiterte).
+
+4x-UltraSharp verteilt der Autor ueber einen Mega-Ordner, der sich nicht automatisch laden laesst. Das Skript laedt
+deshalb Kopien von Hugging Face und nimmt nur eine Datei mit der SHA-256 aus OpenModelDB, also Byte fuer Byte die
+Datei des Autors. RealESRGAN_x4plus kommt direkt aus dem GitHub-Release der Autoren.
+
+Test: Der CI-Job `hd-test` (`.github/workflows/workflow.yml`) spielt das Skript auf `windows-latest` durch, nachdem
+Python des Runners versteckt wurde (PATH, py-Launcher, Registry), mit kuenstlichen Testdaten aus
+`tools/hd_testdaten.py` (GLI, MCF und eine FLC-Animation aus Mustern, keine Spieldaten): erst `-Nur
+schriften,stadtfotos -Behalten`, dann alles (muss Umgebung und Modelle wiederverwenden, die Animation exportieren und
+am Ende aufraeumen).
+
 ### Animierte Personen in Raeumen: Export und Zaehlung (H25a)
 
 Verkaeufer, Berater, Boss usw. in den Raeumen sind Smacker-Videos (`video/*.smk`, `CSmackerPerson`), keine
 GLI-Grafiken, und bleiben deshalb vorerst 1x. Fuer die Planung (H25b/c) exportiert die Engine sie Bild fuer Bild mit
 demselben Decoder wie im Spiel:
+
+Am einfachsten per Startparameter (H29): `AT.exe --hd-export alle` (oder Raeume/Clips wie unten, z. B.
+`AT.exe --hd-export duty,bank`) exportiert ohne Fenster, schreibt am Ende `hd_assets/original/video/export_fertig.txt`
+(Auswahl, Clips, neue Bilder, fehlende Clips, Clips mit Fehler als `fehler_clip;<name>`) und beendet sich; Exit-Code 0,
+bzw. 2 wenn die Auswahl nichts trifft. `AT.json` bleibt dabei unveraendert.
+
+Fehler je Clip (H29b): Vor jedem Clip steht dessen Name in `export_laeuft.txt`, und vor dem Dekodieren steht Groesse,
+Bildzahl und Y-Modus im Log. Ausnahmen und Speicherzugriffsfehler (unter Windows per SEH, sonst per Signal) beenden den
+Export nicht: der Clip kommt mit Grund nach `export_fehler.txt`, sein Ordner wird geloescht, weiter geht es mit dem
+naechsten. Endet das Programm trotzdem (z. B. `exit()` in libsmacker), ueberspringt der naechste Start mit
+`--hd-export` den Clip aus `export_laeuft.txt` und alle schon fertigen Clips (`frames.csv` vorhanden). Fuer den
+CI-Test simuliert die Umgebungsvariable `AT_HD_EXPORT_TEST="absturz:<clip>,ende:<clip>"` beides.
+
+libsmacker (H29b): Zwei Fehler im Decoder liessen `AT.exe` beim Export von `so_gasmask.smk` abstuerzen und betrafen
+auch das Abspielen im Spiel: Ein leerer Huffman-Baum fuehrte beim Nachschlagen zu einem Nullzeiger, und Bilder, deren
+Breite oder Hoehe kein Vielfaches von 4 ist, schrieben ueber das Ende des Bildpuffers. Leere Baeume liefern jetzt 0
+(wie in anderen Smacker-Decodern), der Bildpuffer hat 4 Spalten und Zeilen Reserve, und Paletten- und Audio-Bloecke
+mit unmoeglicher Laenge werden abgewiesen. `tools/hd_testdaten.py` erzeugt dazu eine kuenstliche `so_gasmask.smk`.
+
+Alternativ ueber die Option:
 
 1. In `AT.json` `"OptionHdVideoExport": "alle"` setzen, fuer einen Probelauf nur Raeume oder Clips, z. B. `"duty"`
    (Anfang des Raumnamens genuegt) oder `"dukau, durede"`. Raeume: arabair, aufsicht, bank, buero, designer,
@@ -308,9 +365,9 @@ python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen --raum bank,makle
 python3 tools/hd_generate.py /pfad/zum/spiel --nur animationen                  # alle exportierten Clips
 ```
 
-- Eingabe ist der Engine-Export (H25a) in `hd_assets/original/video`; fehlt er, nennt der Generator die Option
-  `OptionHdVideoExport`. Die Animationen gehoeren nicht zum Standardumfang (lange Rechenzeit, auf der CPU etwa
-  17 Minuten je Million Pixel): nur mit `--nur animationen`.
+- Eingabe ist der Engine-Export (H25a) in `hd_assets/original/video`; fehlt er, nennt der Generator
+  `AT.exe --hd-export alle`. Die Animationen gehoeren nicht zum Standardumfang (lange Rechenzeit, auf der CPU etwa
+  17 Minuten je Million Pixel): nur mit `--alles` oder `--nur animationen`.
 - Verfahren `figur_rgba` mit RealESRGAN_x4plus (wie die Figuren der Halle, H21b), Regel `video/*.smk/*` im Manifest.
 - Zuschnitt: Bounding-Box des Clips aus `frames.csv` (ueber alle Bilder) plus 2 px, im Bild. Ausgabe
   `hd/video/<clip>.smk/<NNNN>.png` (zugeschnitten, 4x) und `crop.csv` (`x0;y0;x1;y1`) je Clip; `crop.csv` wird vor dem
