@@ -26,16 +26,37 @@ The HD files are for private use only and must not be shared. The two AI models 
 licenses (one of them, 4x-UltraSharp, is non-commercial only). The manual way for advanced users is described in
 [HD graphics](#hd-graphics) below.
 
-## Quick start (Linux and macOS)
+## Quick start (macOS)
 
-1. Own and install Airline Tycoon Deluxe, download the Linux or macOS archive (`AT-<version>-linux.tar` / `-macos.tar`) from the
-   [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest) and unpack it into the game folder (the
-   folder with `gli`, `room` and `misc`; on the Mac inside the `.app` bundle, see [macOS](#macos)).
-2. Optional HD: in a terminal in the game folder run `./HD_generate.sh` (on the Mac you can also double-click
-   `HD_generate.command`) and confirm with `Y`. It works like the Windows script: it finds or offers to install
-   Python, downloads the models after you accept their licenses and builds the HD files. Stop with Ctrl+C, run it
+1. Own and install the Mac version of Airline Tycoon Deluxe ([GOG](https://www.gog.com/en/game/airline_tycoon_deluxe)).
+2. Install [Homebrew](https://brew.sh) if you do not have it yet, then in the Terminal:
+   `brew install sdl2-compat sdl2_image sdl2_mixer sdl2_ttf`
+3. Download `AT-<version>-macos.tar` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest)
+   and double-click it to unpack it.
+4. In the Finder, right-click `Airline Tycoon Deluxe.app` -> "Show Package Contents" and open the folder that contains
+   `gli`, `room` and `misc`. Copy all unpacked files there and replace existing files.
+5. Optional, for HD (4x graphics): double-click `HD_generate.command` in that folder and confirm all questions with
+   `Y`. It installs what it needs (Python via Homebrew) and builds the HD files from your own game copy; on a Mac with
+   Apple silicon it uses the graphics chip. You can stop it any time with Ctrl+C and double-click again to continue.
+   Macs with Intel processors are not supported for HD.
+6. Start `AT` from that folder (in the Terminal: `./AT`). If macOS refuses to open `AT` or `HD_generate.command`
+   because it was downloaded from the internet, right-click it and choose "Open" once.
+
+HD and widescreen are not yet confirmed in the game on the Mac; feedback is welcome as an issue.
+
+## Quick start (Linux)
+
+1. Own and install Airline Tycoon Deluxe (the game data from the GOG or Steam version: the folder with `gli`, `room`
+   and `misc`).
+2. Install SDL2, e.g. on Debian/Ubuntu:
+   `sudo apt install libsdl2-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0 libsdl2-ttf-2.0-0`
+3. Download `AT-<version>-linux.tar` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest)
+   and unpack it into the game folder: `tar -xf AT-<version>-linux.tar -C "/path/to/the/game folder"`.
+4. Optional, for HD (4x graphics): in a terminal in the game folder run `./HD_generate.sh` and confirm all questions
+   with `Y`. It installs what it needs (Python via your package manager, after asking) and builds the HD files from
+   your own game copy, on an NVIDIA graphics card if there is one. You can stop it any time with Ctrl+C and run it
    again to continue.
-3. Start `./AT`.
+5. Start `./AT` in the game folder.
 
 ## Major Additions
 
