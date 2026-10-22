@@ -101,6 +101,7 @@ void DecompressWave(BUFFER_V<SND_TYPE> &Input, BUFFER_V<SND_TYPE> &Output);
 */
 
 CString MakeVideoPath, MakeVideoPath2;
+static std::string gHdExportCli; // H29: Startparameter --hd-export <auswahl>
 BOOL MakeUnvideoOn555 = FALSE;
 
 SLONG gTimerCorrection = 0; // Is it necessary to adapt the local clock to the server clock?
@@ -347,6 +348,14 @@ void CTakeOffApp::CLI(int argc, char *argv[]) {
             }
         }
 
+        // H29: --hd-export [auswahl] (fuer HD_generate.bat): Animationen der Raeume exportieren und beenden
+        if (stricmp(Argument, "--hd-export") == 0 || stricmp(Argument, "/hdexport") == 0) {
+            gHdExportCli = "alle";
+            if (i + 1 < argc && argv[i + 1][0] != '-' && argv[i + 1][0] != '/') {
+                gHdExportCli = argv[++i];
+            }
+        }
+
         // Trace the multiplayer protocol into the game log, see NetTrace.h
         if (stricmp(Argument, "/nettrace") == 0) {
             gNetTraceLevel = 1;
@@ -520,6 +529,13 @@ void CTakeOffApp::InitInstance(int argc, char *argv[]) {
     AutoLobbyApplyOptions();
     if (gQuickTestRun == 0 && !AutoLobbyActive()) {
         Sim.SaveOptions();
+    }
+
+    // H29: per Startparameter exportieren und gleich beenden, ohne Fenster und ohne Aenderung an OptionHdVideoExport
+    if (!gHdExportCli.empty()) {
+        const int clips = HdVideoExport(gHdExportCli, true);
+        AT_Log_I("HD", "Video-Export per --hd-export beendet: %d Clips", clips);
+        exit(clips >= 0 ? 0 : 2);
     }
 
     // H25a: Bilder der animierten Personen in Raeumen exportieren, gleich beim Programmstart (ohne Partie);
