@@ -13,12 +13,14 @@ Deutsche Anleitung zu den HD-Grafiken: [README.de.md](README.de.md)
 1. Own and install Airline Tycoon Deluxe ([GOG](https://www.gog.com/en/game/airline_tycoon_deluxe) or
    [Steam](https://store.steampowered.com/app/331920/Airline_Tycoon_Deluxe/)).
 2. Download `AT-2.0.4-windows.zip` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest).
-3. Unzip it into your game folder (the folder with `Gli`, `Room` and `Misc`) and overwrite existing files.
-4. Start `AT.exe` – the game now runs in widescreen.
-5. Optional HD (4x graphics): double-click `HD_generate.bat` and confirm with `Y`.
-   It installs everything it needs and builds the HD files from your own game copy.
-   Without an NVIDIA graphics card this takes about 12 hours – you can stop it any time
-   with Ctrl+C and double-click again to continue. When it is done, the game starts in HD.
+3. Unzip and copy all files into your game folder (e.g. `C:\Program Files (x86)\GOG Galaxy\Games\Airline Tycoon Deluxe`)
+   – overwrite existing files.
+4. Optional, for HD (4x graphics): double-click `HD_generate.bat` and confirm all questions with `Y`. It installs
+   everything it needs and builds the HD files from your own game copy. Without an NVIDIA graphics card this takes
+   about 12 hours; you can stop it any time with Ctrl+C and double-click again to continue. If it reports that it
+   cannot write into the game folder (possible below `C:\Program Files`), right-click it and choose
+   "Run as administrator".
+5. Start `AT.exe` – the game now runs in widescreen, and in HD if you did step 4.
 
 The HD files are for private use only and must not be shared. The two AI models used to create them have their own
 licenses (one of them, 4x-UltraSharp, is non-commercial only). macOS, Linux and the manual way for advanced users are
