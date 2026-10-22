@@ -389,6 +389,11 @@ long _smk_huff16_lookup(struct smk_bit_t* bs, struct smk_huff16_t* big)
 	smk_assert(bs);
 	smk_assert(big);
 
+	/* AT (H29): Some files store an empty tree (no set-bit). Looking it up used to follow a NULL pointer and crash;
+		decode it as value 0 like other Smacker decoders do. */
+	if (!big->t)
+		return 0;
+
 	return _smk_huff16_lookup_rec(bs, big->cache, big->t);
 
 error:

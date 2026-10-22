@@ -238,6 +238,27 @@ add_custom_command(
     WORKING_DIRECTORY "$<TARGET_FILE_DIR:AT>"
 )
 
+# H29: HD-Generator fuer das Release nach hd_tools/ (nur Skripte, keine Spieldaten oder Modelle);
+# unter Windows dazu HD_generate.bat neben AT.exe (Ein-Klick-Weg, siehe README)
+set(HD_TOOLS_DIR "${PROJECT_SOURCE_DIR}/../tools")
+add_custom_command(
+    TARGET AT POST_BUILD
+    COMMENT "Copying HD tools to $<TARGET_FILE_DIR:AT>/hd_tools"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:AT>/hd_tools/hdgen"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${HD_TOOLS_DIR}/HD_generate.ps1" "${HD_TOOLS_DIR}/hd_generate.py" "${HD_TOOLS_DIR}/gli_export.py"
+        "${HD_TOOLS_DIR}/mcf_export.py" "${HD_TOOLS_DIR}/pol_export.py" "$<TARGET_FILE_DIR:AT>/hd_tools"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${HD_TOOLS_DIR}/hdgen/hd_methods.py" "${HD_TOOLS_DIR}/hdgen/manifest.json" "${HD_TOOLS_DIR}/hdgen/requirements.txt"
+        "$<TARGET_FILE_DIR:AT>/hd_tools/hdgen"
+)
+if (WIN32)
+    add_custom_command(
+        TARGET AT POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HD_TOOLS_DIR}/HD_generate.bat" "$<TARGET_FILE_DIR:AT>"
+    )
+endif()
+
 install(TARGETS AT DESTINATION "${PROJECT_INSTALL_DIR}")
 install(FILES "$<TARGET_FILE_DIR:AT>/patch/dlg_ger.patched.res" DESTINATION "${PROJECT_INSTALL_DIR}/patch/")
 install(FILES "$<TARGET_FILE_DIR:AT>/patch/ein_ger.patched.res" DESTINATION "${PROJECT_INSTALL_DIR}/patch/")

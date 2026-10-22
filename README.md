@@ -6,11 +6,30 @@ of Airline Tycoon Deluxe.
 To run it, you'll need the game assets from the Deluxe edition of the game.
 Therefore, you need an existing installation of the game. You can purchase the game from [GOG.com](https://www.gog.com/en/game/airline_tycoon_deluxe) or from [Steam](https://store.steampowered.com/app/331920/Airline_Tycoon_Deluxe/).
 
+Deutsche Anleitung zu den HD-Grafiken: [README.de.md](README.de.md)
+
+## Quick start (Windows)
+
+1. Own and install Airline Tycoon Deluxe ([GOG](https://www.gog.com/en/game/airline_tycoon_deluxe) or
+   [Steam](https://store.steampowered.com/app/331920/Airline_Tycoon_Deluxe/)).
+2. Download `AT-2.0.4-windows.zip` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest).
+3. Unzip it into your game folder (the folder with `Gli`, `Room` and `Misc`) and overwrite existing files.
+4. Start `AT.exe` – the game now runs in widescreen.
+5. Optional HD (4x graphics): double-click `HD_generate.bat` and confirm with `Y`.
+   It installs everything it needs and builds the HD files from your own game copy.
+   Without an NVIDIA graphics card this takes about 12 hours – you can stop it any time
+   with Ctrl+C and double-click again to continue. When it is done, the game starts in HD.
+
+The HD files are for private use only and must not be shared. The two AI models used to create them have their own
+licenses (one of them, 4x-UltraSharp, is non-commercial only). macOS, Linux and the manual way for advanced users are
+described in [HD graphics](#hd-graphics) below.
+
 ## Major Additions
 
 - Native Linux support
 - Dedicated server browser and NAT-punchthrough multiplayer (open source server at: https://github.com/WizzardMaker/ATDMasterServer)
 - New computer player that plays well without cheating
+- Widescreen and optional 4x HD graphics generated from your own copy of the game
 
 ## License
 
@@ -27,110 +46,149 @@ It is therefore *not* open-source in the free software sense, for more informati
 4. Start the game using the new game executable (AT.exe on Windows, AT on macOS and Linux)
 5. Enjoy!
 
-## HD-Grafiken (ab Version 2.0.0, Anleitung auf Deutsch)
+## HD graphics
 
-Ab Version 2.0.0 kann das Spiel alle Grafiken in 4-facher Aufloesung zeichnen. Die HD-Grafiken sind **nicht** im
-Download enthalten: Jede Person erzeugt sie mit `tools/hd_generate.py` aus der eigenen, gekauften Spielkopie.
-Ohne HD-Grafiken laeuft das Spiel wie bisher.
+Since version 2.0.0 the game can draw all graphics at 4x resolution. The HD graphics are **not** part of the
+download: everyone creates them from their own copy of the game. On Windows a double-click on `HD_generate.bat` does
+everything. Without HD graphics the game runs as before.
 
-### Lizenz: bitte zuerst lesen
+### Licenses: please read first
 
-- **Spiel selbst kaufen.** Der Generator arbeitet nur mit einer eigenen Installation von Airline Tycoon Deluxe
-  (GOG oder Steam). Die Originalgrafiken gehoeren BFG / Spellbound.
-- **Das HD-Paket nur privat nutzen.** Die erzeugten Bilder sind abgeleitete Werke der Originalgrafiken. Nicht
-  weitergeben, nicht hochladen, nicht verkaufen.
-- **Modelle:** `4x-UltraSharp` steht unter CC BY-NC-SA 4.0 und darf **nur nicht-kommerziell** genutzt werden.
-  `RealESRGAN_x4plus` steht unter BSD-3-Clause. Beide laedt jede Person selbst herunter; sie liegen nicht im
-  Repository, und der Generator laedt nichts selbst aus dem Netz.
+- **Own the game.** The generator only works with your own installation of Airline Tycoon Deluxe (GOG or Steam).
+  The original graphics belong to BFG / Spellbound.
+- **Private use only.** The generated images are derived from the original graphics. Do not share, upload or sell
+  them.
+- **Models:** `4x-UltraSharp` is licensed under CC BY-NC-SA 4.0 and may be used **non-commercially only**.
+  `RealESRGAN_x4plus` is licensed under BSD-3-Clause. Neither is in the repository or in the download.
+  `HD_generate.bat` shows the licenses and only downloads the models after you confirm with `Y`; each file is checked
+  against its SHA-256 checksum to make sure it is the author's original file. `tools/hd_generate.py` itself never
+  downloads anything.
 
-### Schritt fuer Schritt
+### Recommended: one double-click (Windows)
 
-1. **Spiel und die neueste Version installieren** (mindestens 2.0.0, fuer die Raum-Animationen 2.0.3) wie unter
-   [Installation](#installation) beschrieben. Die neue `AT.exe`
-   (bzw. `AT`) liegt danach im Spielordner.
-2. **Python installieren** (3.9 oder neuer): Windows von [python.org](https://www.python.org/downloads/) (beim
-   Installieren "Add python.exe to PATH" ankreuzen), Linux ueber die Paketverwaltung, macOS z. B. mit Homebrew.
-3. **Generator holen:** dieses Repository als ZIP herunterladen (gruener Knopf "Code" -> "Download ZIP") und
-   entpacken, oder `git clone`. Gebraucht wird der Ordner `tools/`.
-4. **Python-Pakete installieren** (in einer Konsole im entpackten Ordner):
+1. **Install the game and the latest release** (2.0.4 or later) as described in [Installation](#installation):
+   unpack the release archive into the game folder (the one with `gli`, `room` and `misc`). It then contains
+   `AT.exe`, `HD_generate.bat` and the folder `hd_tools`.
+2. **Double-click `HD_generate.bat`.** If Windows asks ("Windows protected your PC"), click "More info" and "Run
+   anyway". The script does the rest and shows "Step x of 8"; confirm questions with `Y`:
+   - checks the game folder, `AT.exe` and the game data,
+   - looks for Python 3.10 to 3.13; if it is missing, it offers to install it with `winget` (for your user only) or
+     tells you what to do,
+   - sets up its own Python environment in `hd_tools\venv`, with CUDA if an NVIDIA graphics card is found
+     (`nvidia-smi`),
+   - shows the licenses of the two models and downloads them into the folder `models` after you type `Y`,
+   - exports the animated people in the rooms (`AT.exe --hd-export alle`, no window). If `AT.exe` stops during the
+     export, the script starts it again and skips the clip concerned; if the export does not work at all, it computes
+     everything else and lists at the end what stays in normal resolution,
+   - computes all HD graphics into `hd` (on the graphics card if possible) and shows the estimated remaining time,
+   - sets `"OptionRenderScale": 4` in `AT.json` and asks whether to delete the temporary files (`hd_assets`) and the
+     Python environment.
+3. **Start the game.** Done.
+
+Duration: without an NVIDIA graphics card about 12 hours (measured: 11:46 h for 14,343 images on a fresh GOG copy;
+the animations are the largest part, more processor cores help), much faster with an NVIDIA graphics card. **Stop**
+at any time with Ctrl+C or by closing the window; the next double-click continues where it stopped. Disk space:
+about 15 GB during the run, afterwards mainly `hd` remains. If something goes wrong, please send the file
+`hd_generate.log` from the game folder.
+
+If the game is installed below `C:\Program Files`, not every user may write there: right-click `HD_generate.bat` and
+choose "Run as administrator".
+
+### For advanced users: manual way (Windows, Linux, macOS)
+
+1. **Install the game and the latest release** as described in [Installation](#installation). The new `AT.exe` (or
+   `AT`) is then in the game folder.
+2. **Install Python** (3.10 to 3.13): on Windows from [python.org](https://www.python.org/downloads/) (tick "Add
+   python.exe to PATH" in the installer), on Linux with the package manager, on macOS e.g. with Homebrew.
+3. **Get the generator:** it is in the folder `hd_tools` of the release, or download this repository as ZIP (green
+   button "Code" -> "Download ZIP") and use the folder `tools/`. The commands below use `tools/`.
+4. **Install the Python packages** (in a console in the unpacked folder):
 
    ```sh
    pip install -r tools/hdgen/requirements.txt
    ```
 
-   Mit NVIDIA-Grafikkarte vorher `torch` mit CUDA nach [pytorch.org](https://pytorch.org/get-started/locally/)
-   installieren; dann geht alles in Minuten statt Stunden. Auf einem Mac mit Apple-Chip (M1 und neuer) bringt das
-   normale `torch` die Grafikkarten-Unterstuetzung (MPS) schon mit.
-5. **Modelle besorgen** und in einen Ordner `models/` neben die `AT.exe` legen:
-   - `4x-UltraSharp.pth` von [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091,
-     CC BY-NC-SA 4.0, nur nicht-kommerziell): fuer Raeume, Oberflaeche, Hallen-Bausteine und Schriften
-   - `RealESRGAN_x4plus.pth` aus dem [Release v0.1.0 von Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)
-     (BSD-3-Clause): fuer die Stadtfotos, die Figuren in der Halle und die animierten Personen in Raeumen
+   With an NVIDIA graphics card, first install `torch` with CUDA as described on
+   [pytorch.org](https://pytorch.org/get-started/locally/); everything is much faster then. On a Mac with Apple
+   silicon (M1 and later) the normal `torch` already supports the graphics chip (MPS).
+5. **Get the models** and put them into a folder `models/` next to `AT.exe`:
+   - `4x-UltraSharp.pth` from [OpenModelDB](https://openmodeldb.info/models/4x-UltraSharp) (Kim2091,
+     CC BY-NC-SA 4.0, non-commercial only; SHA-256 `a5812231fc936b42af08a5edba784195495d303d5b3248c24489ef0c4021fe01`):
+     rooms, user interface, hall bricks and fonts
+   - `RealESRGAN_x4plus.pth` from the [Real-ESRGAN release v0.1.0](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)
+     (BSD-3-Clause; SHA-256 `4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1`): city photos, people
+     in the hall and animated people in rooms
 
-   Findet der Generator ein Modell nicht, fragt er nach dem Pfad (oder `--ultrasharp DATEI`, `--x4plus DATEI`,
-   `--modelle ORDNER`).
-6. **Generator starten** mit dem Spielordner als Ziel:
+   If the generator does not find a model, it asks for the path (or use `--ultrasharp FILE`, `--x4plus FILE`,
+   `--modelle FOLDER`).
+6. **Export the animated people in rooms** (sales people, advisers etc. are videos; the game exports them itself to
+   `hd_assets/original/video` and then quits):
 
    ```sh
-   python tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe"
+   AT.exe --hd-export alle
    ```
 
-   Er exportiert die Grafiken, rechnet sie 4-fach hoch und legt sie in den Ordner `hd/` neben die `AT.exe`.
-   Zwischendateien liegen in `hd_assets/` daneben (kann danach geloescht werden).
-   - Ohne Grafikkarte dauert das ganze Paket viele Stunden. Abbruch mit Strg+C ist jederzeit moeglich; ein neuer
-     Start setzt fort. Gleiche Bilder werden nur einmal gerechnet.
-   - Nur Teile rechnen: `--nur schriften`, `--nur stadtfotos`, `--nur ui`, `--nur raeume`, `--nur bausteine`,
-     `--nur figuren` (Personen in der Halle). Animierte Personen in Raeumen nur auf Wunsch und raumweise:
-     `--nur animationen --raum duty` (Export vorher im Spiel, siehe ASSETS.md). `--bausteine-modellkante` rechnet die Hallen-Bausteine mit glatteren
-     Raendern (Kante per Modell, siehe ASSETS.md)
-     (auch kombiniert, z. B. `--nur schriften,stadtfotos`). Zuerst Schriften und Stadtfotos sind schnell und zeigen
-     sofort, ob alles klappt.
-   - `--gpu` rechnet auf der Grafikkarte: CUDA (NVIDIA, Windows/Linux) oder MPS (Mac mit Apple-Chip), sonst auf der
-     CPU. `--liste` zeigt nur, was zu tun ist.
-   - Das Ergebnis ist reproduzierbar: gleiche Spielkopie, gleiche Modelle und CPU ergeben dieselben Bilder.
-7. **Animierte Personen in Raeumen (freiwillig, ab 2.0.3):** Verkaeufer, Berater usw. sind Videos. Sie gehoeren nicht
-   zum Standardumfang, weil das Rechnen lange dauert (auf der CPU etwa 17 Minuten je Million Pixel, alle Raeume
-   zusammen grob 100 Millionen Pixel; mit Grafikkarte viel schneller).
-   1. Export: in `AT.json` `"OptionHdVideoExport": "alle"` setzen (oder einzelne Raeume, z. B. `"duty"`), das Spiel
-      starten und beenden. Das Spiel legt die Bilder in `hd_assets/original/video` ab und setzt die Option danach
-      selbst wieder auf `""`.
-   2. Rechnen, am besten Raum fuer Raum: `python tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --nur
-      animationen --raum duty` (Raeume siehe [ASSETS.md](ASSETS.md#animierte-personen-in-raeumen-export-und-zaehlung-h25a)).
-      Die Bilder landen in `hd/video/`.
-8. **Im Spiel einschalten:** Das Spiel einmal starten und beenden, dann in der Datei `AT.json` neben der `AT.exe`
-   eintragen bzw. aendern:
+   Single rooms instead of `alle`, e.g. `AT.exe --hd-export duty,bank`. Alternatively set
+   `"OptionHdVideoExport": "alle"` in `AT.json` and start the game once.
+7. **Run the generator** with the game folder as target:
 
-   | Option | Wert | Bedeutung |
-   |---|---|---|
-   | `OptionRenderScale` | `4` | HD-Grafiken verwenden. Muss `4` sein, weil das Paket 4-fach ist (Standard `1` = aus) |
-   | `OptionWidescreen` | `1` / `0` | Breitbild an (Standard) bzw. aus (Bild wie im Original 4:3) |
-   | `OptionWidescreenRoomBorder` | `1` / `0` | Raender neben Raeumen weichgezeichnet (Standard) bzw. schwarz |
-   | `OptionHdVideo` | `1` / `0` | Animierte Personen in Raeumen in HD, wenn `hd/video` vorhanden (Standard) bzw. immer 1x |
-   | `OptionHdVideoMaxMB` | `1024` | Grafikspeicher je animierter Person; passt sie nicht hinein, wird sie ganz in 2x gezeigt |
-   | `OptionHdVideoCacheMB` | `1536` | Grafikspeicher fuer animierte Personen verlassener Raeume; beim erneuten Betreten sofort HD (`0` = aus). Bei wenig Grafikspeicher (integrierte Grafik) kleiner stellen |
+   ```sh
+   python tools/hd_generate.py "C:/GOG Games/Airline Tycoon Deluxe" --alles --gpu --english
+   ```
 
-   `AT.json` nur bei beendetem Spiel bearbeiten: Das Spiel schreibt die Datei beim Beenden neu.
+   It exports the graphics, upscales them 4x and puts them into the folder `hd/` next to `AT.exe`. Temporary files
+   are in `hd_assets/` next to it (can be deleted afterwards).
+   - Without a graphics card the whole package takes many hours; stop with Ctrl+C at any time, the next start
+     continues. Identical images are computed only once.
+   - Without `--alles` the generator computes everything except the animations. Only parts: `--nur schriften`
+     (fonts), `--nur stadtfotos` (city photos), `--nur ui`, `--nur raeume` (rooms), `--nur bausteine` (hall bricks),
+     `--nur figuren` (people in the hall), `--nur animationen --raum duty` (rooms see
+     [ASSETS.md](ASSETS.md#animierte-personen-in-raeumen-export-und-zaehlung-h25a)), also combined, e.g.
+     `--nur schriften,stadtfotos`. Fonts and city photos are quick and show right away whether everything works.
+   - Hall bricks get their edges from the model (smoother edges, default since 2.0.4); `--bausteine-lanczos` computes
+     them as before.
+   - `--gpu` computes on the graphics card: CUDA (NVIDIA, Windows/Linux) or MPS (Mac with Apple silicon), otherwise
+     on the CPU. `--liste` only shows what is to do. `--log FILE` also writes all output to a file, `--english`
+     prints the messages in English.
+   - The result is reproducible: the same game copy, models and CPU give the same images.
+8. **Switch it on in the game:** set `"OptionRenderScale": 4` in the file `AT.json` next to `AT.exe` (the file is
+   created when the game starts for the first time).
 
-   **Werkzeug- und Diagnose-Optionen** (normalerweise nicht noetig; Einzelheiten in [ASSETS.md](ASSETS.md)):
+### Options in AT.json
 
-   | Option | Standard | Wofuer |
-   |---|---|---|
-   | `OptionHdVideoExport` | `""` | Werkzeug: beim Start die Raum-Animationen fuer den Generator exportieren (`"alle"` oder Raeume), setzt sich danach selbst zurueck |
-   | `OptionHdOverlayFilter` | `0` | Feineinstellung: Filter der 1x-Reste ueber HD-Hintergruenden (`0` scharf, `1` weich) |
-   | `OptionHdMissingLog` | `false` | Diagnose: jede Grafik ohne HD-Bild einmal ins Log |
-   | `OptionHdFrameStats` | `0` | Diagnose: Frame-Zeiten und Lage des Mauszeigers alle 5 s ins Log |
-   | `OptionCursorExitAnim` | `1` | Diagnose: `0` = Exit-Pfeil steht still (zum Eingrenzen von Rucklern) |
-   | `OptionHdDebugMask` | `false` | Diagnose: alle 5 s Masken-Bilder nach `hd_debug/` |
-   | `OptionHdPolCheck` | `0` | Diagnose: beim Start die exportierten Hallen-Figuren gegen die Engine pruefen |
+`AT.json` is next to `AT.exe` (or `AT`) and is created when the game starts for the first time.
+
+| Option | Value | Meaning |
+|---|---|---|
+| `OptionRenderScale` | `4` | Use the HD graphics. Must be `4`, because the package is 4x (default `1` = off) |
+| `OptionWidescreen` | `1` / `0` | Widescreen on (default) or off (original 4:3 picture) |
+| `OptionWidescreenRoomBorder` | `1` / `0` | Borders next to rooms blurred (default) or black |
+| `OptionHdVideo` | `1` / `0` | Animated people in rooms in HD if `hd/video` exists (default), or always 1x |
+| `OptionHdVideoMaxMB` | `1024` | Graphics memory per animated person; if it does not fit, the whole person is shown in 2x |
+| `OptionHdVideoCacheMB` | `1536` | Graphics memory for animated people of rooms you left; HD at once when you come back (`0` = off). Lower it with little graphics memory (integrated graphics) |
+
+Only edit `AT.json` while the game is closed: the game rewrites the file when it quits.
+
+**Tool and diagnostic options** (normally not needed; details in [ASSETS.md](ASSETS.md)):
+
+| Option | Default | Purpose |
+|---|---|---|
+| `OptionHdVideoExport` | `""` | Tool: export the room animations for the generator at start (`"alle"` or rooms), resets itself afterwards; easier: `AT.exe --hd-export alle` |
+| `OptionHdOverlayFilter` | `0` | Fine tuning: filter of 1x remains over HD backgrounds (`0` sharp, `1` soft) |
+| `OptionHdMissingLog` | `false` | Diagnostics: log every graphic without HD image once |
+| `OptionHdFrameStats` | `0` | Diagnostics: frame times and mouse cursor position in the log every 5 s |
+| `OptionCursorExitAnim` | `1` | Diagnostics: `0` = exit arrow does not move (to narrow down stutter) |
+| `OptionHdDebugMask` | `false` | Diagnostics: mask images to `hd_debug/` every 5 s |
+| `OptionHdPolCheck` | `0` | Diagnostics: at start, check the exported hall figures against the engine |
 
 ### macOS
 
-> **HD und Breitbild sind auf dem Mac bisher ungetestet**, bis jemand es im Spiel bestaetigt. Getestet ist beides im
-> echten Spiel nur unter Windows. Rueckmeldungen gern als Issue.
+> **HD and widescreen are untested on the Mac** until someone confirms them in the game. Both are only tested in the
+> real game on Windows. Feedback is welcome as an issue.
 
-1. **Python:** entweder mit [Homebrew](https://brew.sh) (`brew install python`) oder mit dem Installer von
-   [python.org](https://www.python.org/downloads/macos/). Die Pakete am besten in eine eigene Umgebung installieren
-   (bei Homebrew-Python noetig, weil `pip install` dort sonst abgelehnt wird):
+1. **Python:** either with [Homebrew](https://brew.sh) (`brew install python`) or with the installer from
+   [python.org](https://www.python.org/downloads/macos/). Best install the packages into their own environment
+   (required with Homebrew Python, which otherwise refuses `pip install`):
 
    ```sh
    python3 -m venv ~/at-hd
@@ -138,25 +196,30 @@ Ohne HD-Grafiken laeuft das Spiel wie bisher.
    pip install -r tools/hdgen/requirements.txt
    ```
 
-   Auf Macs mit Intel-Prozessor gibt es aktuelle `torch`-Versionen nicht mehr; dort geht es nur mit einer aelteren
-   Python-Version (bis 3.12) und `torch` 2.2, ohne Grafikkarte (ungetestet).
-2. **Spieldaten aus der GOG-Mac-Version:** Das Spiel ist ein `.app`-Paket, z. B. `/Applications/Airline Tycoon
-   Deluxe.app`. Die Spieldaten liegen darin in einem Ordner mit `gli/`, `room/` und `misc/` (Rechtsklick auf die App ->
-   "Paketinhalt zeigen"; der genaue Pfad haengt von der Version ab). Der Generator findet diesen Ordner selbst:
+   Current `torch` versions no longer exist for Macs with Intel processors; there it only works with an older Python
+   (up to 3.12) and `torch` 2.2, without graphics card (untested).
+2. **Game data of the GOG Mac version:** the game is an `.app` bundle, e.g. `/Applications/Airline Tycoon
+   Deluxe.app`. The game data are inside it in a folder with `gli/`, `room/` and `misc/` (right-click the app ->
+   "Show Package Contents"; the exact path depends on the version). The generator finds this folder itself:
 
    ```sh
-   python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu
+   python3 tools/hd_generate.py "/Applications/Airline Tycoon Deluxe.app" --gpu --english
    ```
 
-3. **Wohin gehoert `hd/`?** Der Mac-Build von Version 2.0.0 ist ein einzelnes Programm `AT` (kein `.app`). Das Spiel
-   sucht Spieldaten, `AT.json` und `hd/` im Ordner, in dem `AT` liegt. `AT` gehoert also in den Datenordner (den mit
-   `gli/`), und genau dorthin legt der Generator `hd/`. Liegt dort noch kein `AT`, nennt er den Ordner.
-4. **Grafik auf dem Mac:** Das Spiel zeichnet ueber SDL, auf dem Mac standardmaessig mit **Metal**. Zum Vergleich laesst
-   es sich mit OpenGL starten: `SDL_RENDER_DRIVER=opengl ./AT`. Auf Retina-Bildschirmen zeichnet das Spiel derzeit in der
-   Punkt-Aufloesung (z. B. 1440x900 statt 2880x1800); HD ist dort schaerfer als 1x, nutzt die volle Retina-Aufloesung
-   aber noch nicht.
+3. **Where does `hd/` belong?** The Mac build is a single program `AT` (no `.app`). The game looks for its data,
+   `AT.json` and `hd/` in the folder that contains `AT`. So `AT` belongs into the data folder (the one with `gli/`),
+   and that is exactly where the generator puts `hd/`. If there is no `AT` yet, it names the folder.
+4. **Graphics on the Mac:** the game draws via SDL, on the Mac with **Metal** by default. For comparison it can be
+   started with OpenGL: `SDL_RENDER_DRIVER=opengl ./AT`. On Retina displays the game currently draws in point
+   resolution (e.g. 1440x900 instead of 2880x1800); HD is sharper than 1x there, but does not use the full Retina
+   resolution yet.
 
-Technische Einzelheiten (Verfahren, Manifest, Dateinamen) stehen in [ASSETS.md](ASSETS.md).
+### Linux
+
+Use the manual way above: `./AT --hd-export alle`, then `python3 tools/hd_generate.py <game folder> --alles --gpu`
+(CUDA with an NVIDIA card).
+
+Technical details (methods, manifest, file names) are in [ASSETS.md](ASSETS.md).
 
 ## Building
 
@@ -169,10 +232,26 @@ You can see the instructions to build and run the project in [BUILDING.md](BUILD
 
 ## Changes
 
-### HD graphics and widescreen (2.0.0 - 2.0.3)
-* Optional 4x HD graphics, generated locally from your own copy of the game with `tools/hd_generate.py` (see the German
-  guide above; nothing copyrighted is distributed): rooms, UI, fonts, city photos, airport hall bricks, people in the
-  hall, thought bubbles and, since 2.0.3, the animated people in rooms
+### Version 2.0.4
+* One-click HD on Windows: `HD_generate.bat` (next to `AT.exe`) checks the game folder, installs Python with `winget`
+  if needed (after asking), sets up its own Python environment (with CUDA on NVIDIA cards), downloads the models after
+  you confirm their licenses (checked by SHA-256), exports the room animations, computes all HD graphics and switches
+  the game to HD. It can be stopped with Ctrl+C and resumes on the next double-click; log in `hd_generate.log`. All
+  messages are in English.
+* New start parameter `AT.exe --hd-export [alle|rooms]`: exports the room animations for the generator without a
+  window and quits. An error in one clip no longer ends the export; the next start continues and skips that clip.
+* Hall bricks: edges computed by the model (smoother) are now the default; `--bausteine-lanczos` restores the old way.
+* Fixed crashes in the Smacker video decoder (libsmacker): empty Huffman trees and frame sizes that are not a multiple
+  of 4 (heap overflow). This also affected playing such videos in the game.
+* Generator: `--alles` (everything incl. animations), `--log FILE`, `--english`.
+* Build: the release archives contain the generator in `hd_tools/`; the macOS build runs on `macos-15` (the
+  `macos-latest` runners were often unavailable) and is retried automatically if no runner was found. Preview builds
+  are published as pre-releases, so "Latest release" always points to the real release.
+
+### HD graphics and widescreen (2.0.0 - 2.0.4)
+* Optional 4x HD graphics, generated locally from your own copy of the game (see [HD graphics](#hd-graphics); nothing
+  copyrighted is distributed): rooms, UI, fonts, city photos, airport hall bricks, people in the hall, thought bubbles
+  and, since 2.0.3, the animated people in rooms; since 2.0.4 with one double-click on Windows
 * Widescreen: the airport hall and rooms with a status bar use the full 16:10 / 16:9 width; soft borders next to rooms
 * 2.0.3: animated people in rooms in HD (loaded in the background, cached across visits, whole figure in 2x if it does
   not fit the memory limit), fixed mouse cursor jumps and shifted click areas in widescreen rooms

@@ -342,8 +342,10 @@ static smk smk_open_generic(const unsigned char m, union smk_read_t fp, unsigned
     smk_free(bs);
     smk_free(hufftree_chunk);
 
-    /* Go ahead and malloc storage for the video frame */
-    smk_malloc(s->video.frame, s->video.w * s->video.h);
+    /* Go ahead and malloc storage for the video frame.
+       AT (H29): the decoder writes whole 4x4 blocks, so a width or height that is not a multiple of 4 wrote past the
+       end of the buffer (heap corruption). Allocate 4 extra columns and rows; callers still read only w * h. */
+    smk_malloc(s->video.frame, (s->video.w + 4) * (s->video.h + 4));
 
     /* final processing: depending on ProcessMode, handle what to do with rest of file data */
     s->mode = process_mode;
@@ -1116,6 +1118,12 @@ static char smk_render(smk s) {
                 subsequent bytes are present */
         size = 4 * (*p);
 
+        /* AT (H29): an empty or oversized record would underflow size / i and read far past the chunk */
+        if (size == 0 || size > i) {
+            fprintf(stderr, "libsmacker::smk_render(s) - ERROR: frame %lu: invalid palette record size %lu.\n", s->cur_frame, size);
+            goto error;
+        }
+
         /* If video rendering enabled, kick this off for decode. */
         // if (s->video.enable)
         //{
@@ -1137,6 +1145,12 @@ static char smk_render(smk s) {
             /* First 4 bytes in block tell how many
                     subsequent bytes are present */
             size = (((unsigned int)p[3] << 24) | ((unsigned int)p[2] << 16) | ((unsigned int)p[1] << 8) | ((unsigned int)p[0]));
+
+            /* AT (H29): see palette record above */
+            if (size < 4 || size > i) {
+                fprintf(stderr, "libsmacker::smk_render(s) - ERROR: frame %lu: invalid audio[%u] record size %lu.\n", s->cur_frame, track, size);
+                goto error;
+            }
 
             /* If audio rendering enabled, kick this off for decode. */
             if (s->audio[track].enable) {
