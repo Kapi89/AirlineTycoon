@@ -204,7 +204,7 @@ void GameFrame::UpdateWindow() const {
         break;
     default:
         hprintf("GameFrame.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 
     UpdateFrameSize();
@@ -396,7 +396,7 @@ GameFrame::GameFrame() {
         break;
     default:
         hprintf("GameFrame.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 
     if (h == nullptr) {

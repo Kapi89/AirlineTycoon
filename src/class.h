@@ -1480,6 +1480,11 @@ class /**/ PERSON {
     TEAKRAND PersonalRandWalk; // Der private Zufallsgenerator für Laufangelegenheiten
 
   public:
+    UBYTE GetIsRunning() const { return Running; }
+    void SetIsRunning(UBYTE val) { Running = val; }
+    UBYTE GetDir() const { return Dir; }
+    UBYTE GetPhase() const { return Phase; }
+    SLONG GetStatePar() const { return StatePar; }
     XY Target;    // Hier will die Person hin
     XY Position;  // Die rechnerische Position (ohne Isometrie)
     XY ScreenPos; // aktuelle Position auf dem Flughafen/Bildschirm
@@ -1531,7 +1536,6 @@ class /**/ PERSON {
     friend class SIM;
     friend class GameMechanic;
     friend class AIRPORT;
-    friend class ClaudeBot;
 };
 
 class /**/ PERSONS : public ALBUM_V<PERSON> {
@@ -1998,32 +2002,38 @@ class CAirportSmack : public CSmack16 {
 class PLAYER {
     // Generelles:
   public:
-    SLONG PlayerNum{};                           // Seine Nummer
-    BOOL IsOut;                                  // Ist der Spieler aus dem Spiel?
-    CString Name;                                // Karl Arsch oder Dirk Doof
-    CString NameX;                               // ohne Leerstellen
-    CString Airline;                             // Name der Fluglinie;
-    CString AirlineX;                            // Name der Fluglinie; ohne Leerstellen am Ende
-    CString Abk;                                 // Kurzname der Fluglinie, z.B. 'LH'
-    UBYTE Owner{};                               // Spieler=0, Computergegner=1, Netzwerkgegner=2
-    ULONG NetworkID;                             // IDs des Spielers im Netzwerk (0=Nicht im Netzwerk)
-    UBYTE Logo{};                                // Nummer des Logos der Fluglinie
-    __int64 Money{};                             // Seine Barschaft
-    __int64 Bonus{};                             // versteckter Bonus, den der Computerspieler noch erhält
-    BUFFER_V<__int64> MoneyPast;                 // Vergangenheitslinie des Geldes
-    __int64 Credit{};                            // Seine Schulden
-    SLONG Image{};                               // Firmenimage generell [-1000..1000]
-    DOUBLE KerosinQuali{};                       // Qualität des Kerosins
-    SLONG KerosinKind{};                         // Diese Art wird getankt
-    SLONG Tank{};                                // Soviel kann man auf Reserve Bunkern
-    BOOL TankOpen{};                             // Tanks sind zur Verwendung freigegeben
-    SLONG TankInhalt{};                          // Soviel ist im Tank drin
-    DOUBLE TankPreis{};                          // Korekt berechneter Preis; auch bei mix
+    SLONG PlayerNum{};           // Seine Nummer
+    BOOL IsOut;                  // Ist der Spieler aus dem Spiel?
+    CString Name;                // Karl Arsch oder Dirk Doof
+    CString NameX;               // ohne Leerstellen
+    CString Airline;             // Name der Fluglinie;
+    CString AirlineX;            // Name der Fluglinie; ohne Leerstellen am Ende
+    CString Abk;                 // Kurzname der Fluglinie, z.B. 'LH'
+    UBYTE Owner{};               // Spieler=0, Computergegner=1, Netzwerkgegner=2
+    ULONG NetworkID;             // IDs des Spielers im Netzwerk (0=Nicht im Netzwerk)
+    UBYTE Logo{};                // Nummer des Logos der Fluglinie
+    __int64 Money{};             // Seine Barschaft
+    __int64 Bonus{};             // versteckter Bonus, den der Computerspieler noch erhält
+    BUFFER_V<__int64> MoneyPast; // Vergangenheitslinie des Geldes
+    __int64 Credit{};            // Seine Schulden
+    SLONG Image{};               // Firmenimage generell [-1000..1000]
+    DOUBLE KerosinQuali{};       // Qualität des Kerosins
+    SLONG KerosinKind{};         // Diese Art wird getankt
+    SLONG Tank{};                // Soviel kann man auf Reserve Bunkern
+    BOOL TankOpen{};             // Tanks sind zur Verwendung freigegeben
+    SLONG TankInhalt{};          // Soviel ist im Tank drin
+    DOUBLE TankPreis{};          // Korekt berechneter Preis; auch bei mix
 
-    /* Network: The tank state the owner sends is only right at the point of the flights where it
-       was taken, since every flight takes kerosine from the tank on every peer. So the flights
-       from the tank are counted per day, and a state from the owner is applied once we have
-       booked as many flights (see ATNET_SYNCKEROSIN). */
+    /* Network: Every peer books every player's flights itself, and each booking changes money,
+       image, route usage and the tank. A state the owner sends is therefore only right at the
+       point of the flights where it was taken. The flights booked are counted per day (see
+       NetFlightStamp()), and the state is sent with that count and taken only by a peer that has
+       booked as many. */
+    SLONG NetFlightsDate{-1};
+    SLONG NetFlightsToday{};
+
+    /* A tank state from an owner that is ahead of us waits here until we have booked as many
+       flights (see ATNET_SYNCKEROSIN). */
     struct NetTankState {
         SLONG Stamp{-1}; // -1 = nothing pending
         SLONG Tank{};
@@ -2033,8 +2043,6 @@ class PLAYER {
         SLONG KerosinKind{};
         DOUBLE TankPreis{};
     };
-    SLONG NetTankFlightsDate{-1};
-    SLONG NetTankFlights{};
     NetTankState NetTankPending;
     SLONG GameSpeed{};                           // 0..3
     SLONG ArabTrust{};                           // Sabotage möglich?
@@ -2242,6 +2250,7 @@ class PLAYER {
     void BuyItem(UBYTE Item);
     SLONG CalcSecurityCosts(bool bFixOnly = false, bool bPlaneOnly = false);
     void DisplayAsTelefoning(void) const;
+    void ElectroShock(void);
     bool DropItem(UBYTE Item);
     SLONG CalcCreditLimit(void) const;
     SLONG CalcCreditLimit(__int64 money, __int64 credit) const;
@@ -2297,6 +2306,7 @@ class PLAYER {
     void UpdateAuftraege(void); // Bringt Aufträge aus neusten Stand; bucht Strafen
     void UpdatePersonalberater(SLONG Toleranz);
     void UpdateStatistics(void);
+    void UpdateStaffStatistics(void);
     void UpdateTicketpreise(SLONG RouteId, SLONG Ticketpreis, SLONG TicketpreisFC);
     BOOL WalkToRoom(UBYTE RoomId);
     void WalkToMouseClick(XY AirportClickPos);
@@ -2326,8 +2336,8 @@ class PLAYER {
     void NetUpdateRentRoute(SLONG Route1Id, SLONG Route2Id);
     void NetUpdateWorkers(void);
     void NetUpdateKerosin(void) const;
-    SLONG NetTankStamp() const;
-    void NetTankFlightBooked();
+    SLONG NetFlightStamp() const;
+    void NetFlightBooked();
     void NetReceiveKerosin(const NetTankState &State);
     void NetApplyPendingKerosin();
     static void NetSynchronizePlanes(void);
@@ -2367,6 +2377,7 @@ class PLAYERS {
     void MessagePump(void);
     void RandomBeraterMessage(void);
     void UpdateStatistics(void);
+    void UpdateStaffStatistics(void);
     void CheckFlighplans(void);
 
     friend TEAKFILE &operator<<(TEAKFILE &File, const PLAYERS &Players);
@@ -2417,7 +2428,7 @@ class AIRPORT {
     XY GetBestStairs(UBYTE Par, SLONG x1, SLONG x2);
     SLONG GetNumberOfFreeGates(void);
     SLONG GetNumberOfShops(ULONG BrickId);
-    UBYTE GetRuneParNear(const XY &Pos, const XY &MaxDist, ULONG RuneType);
+    UBYTE GetRuneParNear(const XY &Pos, const XY &MaxDist, ULONG RuneType) const;
     BUILD *GetBuildNear(const XY &Pos, const XY &MaxDist, ULONG BrickId);
     SLONG IsInMarkedArea(const XY &Pos);
     SLONG CalcPlateXPosition(SLONG BuildIndex, SLONG BrickXOffset, SLONG Alignment);

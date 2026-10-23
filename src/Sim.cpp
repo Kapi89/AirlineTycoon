@@ -65,9 +65,13 @@ extern SLONG gTimerCorrection;
 
 void CalcPlayerMaximums(bool bForce);
 
+// The format this build writes: version 1.9.1
+static const SLONG kCurrentSaveVersion = 1;
+static const SLONG kCurrentSaveVersionSub = 204;
+
 // Daten des aktuellen Savegames beim laden:
-SLONG SaveVersion = 1;
-SLONG SaveVersionSub = 204;
+SLONG SaveVersion = kCurrentSaveVersion;
+SLONG SaveVersionSub = kCurrentSaveVersionSub;
 
 // Öffnungszeiten:
 extern SLONG timeDutyOpen;
@@ -824,11 +828,11 @@ void SIM::ChooseStartup() {
         qPlayer.Auftraege.ClearAlbum();
         qPlayer.Frachten.ClearAlbum();
 
-        if (GlobalUse(USE_TRAVELHOLDING) && Difficulty != DIFF_ADDON09) {
-            if (bNetwork == 0) {
-                qPlayer.Auftraege.Random.SRand(AtGetSeedTime());
-            }
+        if (bNetwork == 0) {
+            qPlayer.Auftraege.Random.SRand(AtGetSeedTime());
+        }
 
+        if (GlobalUse(USE_TRAVELHOLDING) && Difficulty != DIFF_ADDON09) {
             a.RefillForBegin(0, &qPlayer.Auftraege.Random);
             qPlayer.Auftraege += a;
             a.RefillForBegin(0, &qPlayer.Auftraege.Random);
@@ -1357,6 +1361,42 @@ void SIM::DoTimeStep() {
 
     Minute = GetMinute();
 
+    /* Departures from a home airport gate: the plane starts taxiing at xx:55 (CPlane::DoOneStep). The
+       taxi and takeoff animation runs per frame, so its end falls on a different game time on every
+       peer. Book the flight at xx:55 and put the plane into the air at the full hour instead, for all
+       players in the same order, so that every peer books the same flights at the same time. */
+    if ((Minute >= 55 && OldMinute < 55) || Minute < OldMinute) {
+        const bool bBook = (Minute >= 55);
+        const SLONG Now = Date * 24 + GetHour();
+
+        for (c = 0; c < Players.AnzPlayers; c++) {
+            for (d = 0; d < Players.Players[c].Planes.AnzEntries(); d++) {
+                if (Players.Players[c].Planes.IsInAlbum(d) == 0) {
+                    continue;
+                }
+                CPlane &qPlane = Players.Players[c].Planes[d];
+
+                if ((qPlane.Ort != -3 && qPlane.Ort != -2) || qPlane.Startzeit == 255 || qPlane.Flugplan.NextFlight == -1) {
+                    continue;
+                }
+                CFlugplanEintrag &qFPE = qPlane.Flugplan.Flug[qPlane.Flugplan.NextFlight];
+                if (qFPE.ObjectType == 0) {
+                    continue;
+                }
+
+                const SLONG Departure = qFPE.Startdate * 24 + qFPE.Startzeit;
+                if (bBook ? (Departure == Now) : (Departure + 1 == Now)) {
+                    if (qFPE.FlightBooked == 0) {
+                        qFPE.BookFlight(&qPlane, c);
+                    }
+                    if (!bBook) {
+                        qPlane.Ort = -5;
+                    }
+                }
+            }
+        }
+    }
+
     if (Minute != OldMinute) // Redraw der Statuszeile erzwingen:
     {
         PersonRandCreate.SRand(Minute * 333 + GetHour() * 7);
@@ -1860,18 +1900,18 @@ void SIM::DoTimeStep() {
                                         }
                                         break;
                                     case 2:
-                                        if (qPlane.Elektronik != 2) {
+                                        if (qPlane.Triebwerk != 2) {
                                             bCanHappenToThisPlane = true;
                                         }
                                         break;
                                     case 3:
-                                        if (qPlane.Elektronik != 2) {
+                                        if (qPlane.Reifen != 2) {
                                             bCanHappenToThisPlane = true;
                                         }
                                         break;
                                     default:
                                         hprintf("Sim.cpp: Default case should not be reached.");
-                                        DebugBreak();
+                                        AtDebugBreak();
                                     }
 
                                     if (bCanHappenToThisPlane) {
@@ -2489,10 +2529,10 @@ void SIM::NewDay() {
                 // hprintf ("Event: %s (Player %li) buys %s.", qPlayer.NameX, TafelData.City[c].Player+1,
                 // (LPCTSTR)Cities[TafelData.City[c].ZettelId].Name);
 
-                qPlayer.ChangeMoney(-TafelData.City[c].Preis * 3,
+                qPlayer.ChangeMoney(-TafelData.City[c].Preis * AUCTION_RENT_MONTHS,
                                     2040, // Ersteigerung eines Schalters
                                     Cities[TafelData.City[c].ZettelId].Name);
-                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.City[c].Preis * 3, 2040);
+                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.City[c].Preis * AUCTION_RENT_MONTHS, 2040);
 
                 TafelData.City[c].ZettelId = -1;
                 TafelData.City[c].Player = -1;
@@ -2516,11 +2556,11 @@ void SIM::NewDay() {
 
                 qPlayer.RentRoute(Routen[TafelData.Route[c].ZettelId].VonCity, Routen[TafelData.Route[c].ZettelId].NachCity, TafelData.Route[c].Preis);
 
-                qPlayer.ChangeMoney(-TafelData.Route[c].Preis * 3,
+                qPlayer.ChangeMoney(-TafelData.Route[c].Preis * AUCTION_RENT_MONTHS,
                                     2041, // Ersteigerung einer Route
                                     CString(bprintf("%s-%s", (LPCTSTR)Cities[Routen[TafelData.Route[c].ZettelId].VonCity].Kuerzel,
                                                     (LPCTSTR)Cities[Routen[TafelData.Route[c].ZettelId].NachCity].Kuerzel)));
-                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.Route[c].Preis * 3, 2041);
+                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.Route[c].Preis * AUCTION_RENT_MONTHS, 2041);
 
                 TafelData.Route[c].ZettelId = 0;
                 TafelData.Route[c].Player = -1;
@@ -2550,8 +2590,8 @@ void SIM::NewDay() {
                 // hprintf ("Event: %s (Player %li) buys Gate.", Players.Players[TafelData.Gate[c].Player].NameX, TafelData.Route[c].Player+1);
 
                 // Ersteigerung eines Gates:
-                qPlayer.ChangeMoney(-TafelData.Gate[c].Preis * 3, 2042, "");
-                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.Gate[c].Preis * 3, 2042);
+                qPlayer.ChangeMoney(-TafelData.Gate[c].Preis * AUCTION_RENT_MONTHS, 2042, "");
+                // SIM::SendSimpleMessage64(ATNET_CHANGEMONEY, 0, qPlayer.PlayerNum, -TafelData.Gate[c].Preis * AUCTION_RENT_MONTHS, 2042);
 
                 TafelData.Gate[c].ZettelId = -1;
                 TafelData.Gate[c].Player = -1;
@@ -2584,6 +2624,10 @@ void SIM::NewDay() {
     TafelData.Randomize(min(Date + 2, 7));
 
     Workers.NewDay();
+
+    /* Last computed in Players[c].NewDay() above, before the night's changes to the staff,
+       which the morning briefing shows. */
+    Players.UpdateStaffStatistics();
 
     // Gute Spieler sind den anderen unsympatisch:
     for (c = 0; c < Players.AnzPlayers; c++) {
@@ -3295,6 +3339,14 @@ BOOL SIM::LoadGame(SLONG Number) {
         }
     }
 
+    /* The readers and writers that network messages share with the savegame look at these, so
+       they must describe the format this build writes, not the one just loaded. Otherwise a game
+       continued from an older savegame reads every message in the old layout until the next
+       save, and a peer that autosaves (an option each peer sets for itself) switches to the new
+       layout while the others keep the old one. */
+    SaveVersion = kCurrentSaveVersion;
+    SaveVersionSub = kCurrentSaveVersionSub;
+
     /* Every peer loads its own copy of the savegame, so this is the first chance to see whether
        they saved the same game. */
     NetTraceFingerprint("loaded");
@@ -3317,8 +3369,8 @@ void SIM::SaveGame(SLONG Number, const CString &Name) const {
     CString Filename = FullFilename((LPCTSTR)bprintf(pNamebaseStr, Number), SavegamePath);
     SLONG NumSaveGameCities = Cities.AnzEntries();
 
-    SaveVersion = 1;
-    SaveVersionSub = 204; // Version 1.9.1
+    SaveVersion = kCurrentSaveVersion;
+    SaveVersionSub = kCurrentSaveVersionSub;
 
     fs::path path{Filename.c_str()};
     fs::create_directory(path.parent_path());
@@ -3776,7 +3828,7 @@ void SIM::NetRefill(SLONG Type, SLONG City) const {
         break;
     default:
         hprintf("Sim.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 
     Time = Time - Delta;
@@ -3881,19 +3933,19 @@ void SIM::SaveHighscores() {
                 k1 = k2 = k3 = k4 = k5 = 0;
             }
 
-            str = bprintf("%I64i;", k1);
+            str = bprintf("%lli;", k1);
             OutputFile.Write(reinterpret_cast<const UBYTE *>((LPCTSTR)str), str.GetLength());
 
-            str = bprintf("%I64i;", k2);
+            str = bprintf("%lli;", k2);
             OutputFile.Write(reinterpret_cast<const UBYTE *>((LPCTSTR)str), str.GetLength());
 
-            str = bprintf("%I64i;", k3);
+            str = bprintf("%lli;", k3);
             OutputFile.Write(reinterpret_cast<const UBYTE *>((LPCTSTR)str), str.GetLength());
 
-            str = bprintf("%I64i;", k4);
+            str = bprintf("%lli;", k4);
             OutputFile.Write(reinterpret_cast<const UBYTE *>((LPCTSTR)str), str.GetLength());
 
-            str = bprintf("%I64i\xd\xa", k5);
+            str = bprintf("%lli\xd\xa", k5);
             OutputFile.Write(reinterpret_cast<const UBYTE *>((LPCTSTR)str), str.GetLength());
         }
     } catch (TeakLibException &e) {
@@ -3952,7 +4004,7 @@ SLONG SIM::HoleKerosinPreis(SLONG typ) const {
         return Kerosin / 2;
     default:
         hprintf("Sim.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
     return 0;
 }
