@@ -482,6 +482,36 @@ void SB_CColorFX::ApplyOn2(SLONG Step, SB_CBitmapCore *SrcBitmap, SLONG Step2, S
         }
 #endif
     }
+
+    // HD (Phase 2, H31): Ueberblendung auf der GPU (Tageswechsel Tag/Nacht, Intro ...), die Referenz rechnet wie oben
+    const SLONG width = min(min(SrcBitmap->GetXSize(), SrcBitmap2->GetXSize()), TgtBitmap->GetXSize());
+    const SDL_Rect area{0, ClipRect.top, width, ClipRect.bottom - ClipRect.top};
+    SB_RecordHdBlend(TgtBitmap, SrcBitmap, Step, SrcBitmap2, Step2, AnzSteps - 1, area, &SB_CColorFX::ReplayBlend, this);
+}
+
+// Ein Anteil der Ueberblendung auf der Referenz: Ziel = Tabelle[Schritt](Quelle), mit Bit 8 dazuaddiert (wie ApplyOn2)
+void SB_CColorFX::ReplayBlend(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY /*pos*/, SLONG param,
+                              const void *ctx) {
+    const auto *fx = static_cast<const SB_CColorFX *>(ctx);
+    const UWORD *Table = fx->BlendTables.getData() + ((param & 0xFF) << 9);
+    const bool add = (param & 0x100) != 0;
+    SDL_Rect r;
+    const SDL_Rect bounds{0, 0, min(target->w, src->w), min(target->h, src->h)};
+    if (SDL_IntersectRect(&srcRect, &clip, &r) == SDL_FALSE || SDL_IntersectRect(&r, &bounds, &r) == SDL_FALSE) {
+        return;
+    }
+    SDL_LockSurface(target);
+    SDL_LockSurface(src);
+    for (SLONG y = r.y; y < r.y + r.h; y++) {
+        const auto *s = reinterpret_cast<const UBYTE *>(static_cast<const char *>(src->pixels) + y * src->pitch) + r.x * 2;
+        auto *t = reinterpret_cast<UWORD *>(static_cast<char *>(target->pixels) + y * target->pitch) + r.x;
+        for (SLONG x = 0; x < r.w; x++, s += 2, t++) {
+            const UWORD v = Table[s[0]] + Table[256 + s[1]];
+            *t = add ? UWORD(*t + v) : v;
+        }
+    }
+    SDL_UnlockSurface(src);
+    SDL_UnlockSurface(target);
 }
 
 //--------------------------------------------------------------------------------------------

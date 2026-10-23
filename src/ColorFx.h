@@ -39,6 +39,7 @@ class SB_CColorFX {
     static void ReplayAlpha(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *shade, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
     void TransRows(void *tgt, SLONG tgtPitch, const SDL_Rect &clip, const void *src, SLONG srcPitch, const CRect &SrcRect, const XY &TargetPos,
                    SLONG Grade) const;
+    static void ReplayBlend(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
     static void ReplayTrans(SDL_Surface *target, const SDL_Rect &clip, SDL_Surface *src, const SDL_Rect &srcRect, XY pos, SLONG param, const void *ctx);
     void WhiteRows(void *tgt, SLONG tgtPitch, const SDL_Rect &clip, const void *src, SLONG srcPitch, const CRect &SrcRect, const XY &TargetPos,
                    SLONG Table1Index, SLONG Table2Index, UWORD White) const;

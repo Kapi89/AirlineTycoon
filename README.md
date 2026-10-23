@@ -313,6 +313,11 @@ You can see the instructions to build and run the project in [BUILDING.md](BUILD
 
 * One-click HD on Linux and macOS: `HD_generate.sh` next to `AT` (on the Mac also `HD_generate.command` for a
   double-click), the same steps and log as `HD_generate.bat` on Windows. Tested in CI on Ubuntu and macOS 15.
+* HD: the end-of-day screen (airport outside) now fades between day and night on the GPU with both HD pictures instead
+  of falling back to the original graphics between 20:00 and 23:00 and between 5:00 and 8:00. Other cross-fades
+  between two pictures (intro, pause) use the HD pictures as well where they exist.
+* HD diagnosis: F11 also logs every text highlight of the dumped frame (share of HD, glow new or cached, HD glyphs
+  and entries drawn on top).
 
 ### Version 2.0.4
 * One-click HD on Windows: `HD_generate.bat` (next to `AT.exe`) checks the game folder, installs Python with `winget`
