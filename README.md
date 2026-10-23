@@ -23,8 +23,40 @@ Deutsche Anleitung zu den HD-Grafiken: [README.de.md](README.de.md)
 5. Start `AT.exe` – the game now runs in widescreen, and in HD if you did step 4.
 
 The HD files are for private use only and must not be shared. The two AI models used to create them have their own
-licenses (one of them, 4x-UltraSharp, is non-commercial only). macOS, Linux and the manual way for advanced users are
-described in [HD graphics](#hd-graphics) below.
+licenses (one of them, 4x-UltraSharp, is non-commercial only). The manual way for advanced users is described in
+[HD graphics](#hd-graphics) below.
+
+## Quick start (macOS)
+
+1. Own and install the Mac version of Airline Tycoon Deluxe ([GOG](https://www.gog.com/en/game/airline_tycoon_deluxe)).
+2. Install [Homebrew](https://brew.sh) if you do not have it yet, then in the Terminal:
+   `brew install sdl2-compat sdl2_image sdl2_mixer sdl2_ttf`
+3. Download `AT-<version>-macos.tar` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest)
+   and double-click it to unpack it.
+4. In the Finder, right-click `Airline Tycoon Deluxe.app` -> "Show Package Contents" and open the folder that contains
+   `gli`, `room` and `misc`. Copy all unpacked files there and replace existing files.
+5. Optional, for HD (4x graphics): double-click `HD_generate.command` in that folder and confirm all questions with
+   `Y`. It installs what it needs (Python via Homebrew) and builds the HD files from your own game copy; on a Mac with
+   Apple silicon it uses the graphics chip. You can stop it any time with Ctrl+C and double-click again to continue.
+   Macs with Intel processors are not supported for HD.
+6. Start `AT` from that folder (in the Terminal: `./AT`). If macOS refuses to open `AT` or `HD_generate.command`
+   because it was downloaded from the internet, right-click it and choose "Open" once.
+
+HD and widescreen are not yet confirmed in the game on the Mac; feedback is welcome as an issue.
+
+## Quick start (Linux)
+
+1. Own and install Airline Tycoon Deluxe (the game data from the GOG or Steam version: the folder with `gli`, `room`
+   and `misc`).
+2. Install SDL2, e.g. on Debian/Ubuntu:
+   `sudo apt install libsdl2-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0 libsdl2-ttf-2.0-0`
+3. Download `AT-<version>-linux.tar` from the [latest release](https://github.com/Kapi89/AirlineTycoon/releases/latest)
+   and unpack it into the game folder: `tar -xf AT-<version>-linux.tar -C "/path/to/the/game folder"`.
+4. Optional, for HD (4x graphics): in a terminal in the game folder run `./HD_generate.sh` and confirm all questions
+   with `Y`. It installs what it needs (Python via your package manager, after asking) and builds the HD files from
+   your own game copy, on an NVIDIA graphics card if there is one. You can stop it any time with Ctrl+C and run it
+   again to continue.
+5. Start `./AT` in the game folder.
 
 ## Major Additions
 
@@ -95,6 +127,26 @@ about 15 GB during the run, afterwards mainly `hd` remains. If something goes wr
 
 If the game is installed below `C:\Program Files`, not every user may write there: right-click `HD_generate.bat` and
 choose "Run as administrator".
+
+### Linux and macOS: HD_generate.sh
+
+`HD_generate.sh` lies next to `AT` in the Linux and macOS release (on the Mac also `HD_generate.command` for a
+double-click in the Finder). It does the same 8 steps as the Windows script, with the same log file
+`hd_generate.log`:
+
+- Python 3.10 to 3.14 with the module `venv`: if it is missing, the script offers to install it with the package
+  manager (`apt`, `dnf`, `pacman`, `zypper`; asks for your password via `sudo`) or on the Mac with Homebrew, otherwise
+  it tells you what to install.
+- `torch`: on Linux with an NVIDIA card the CUDA build that fits the driver, otherwise the CPU build; on a Mac with
+  Apple silicon the normal build, which computes on the Apple graphics chip (MPS). Macs with Intel processors are not
+  supported by current `torch` versions (see the manual way below).
+- The animations are exported with `./AT --hd-export alle`; no display is needed.
+- Options: `--yes` (answer everything with yes), `--only schriften,stadtfotos`, `--cpu`, `--keep` (delete nothing at
+  the end), `--game FOLDER`.
+
+On the Mac, `AT`, `HD_generate.sh` and the folder `hd_tools` must be in the data folder inside the `.app` bundle (see
+[macOS](#macos)). If macOS refuses to open `HD_generate.command` or `AT` because they were downloaded from the internet,
+right-click and choose "Open" once; the script also offers to remove this block for `AT`.
 
 ### For advanced users: manual way (Windows, Linux, macOS)
 
@@ -218,8 +270,8 @@ Only edit `AT.json` while the game is closed: the game rewrites the file when it
 
 ### Linux
 
-Use the manual way above: `./AT --hd-export alle`, then `python3 tools/hd_generate.py <game folder> --alles --gpu`
-(CUDA with an NVIDIA card).
+Easiest is `./HD_generate.sh` (see above). By hand: `./AT --hd-export alle`, then
+`python3 tools/hd_generate.py <game folder> --alles --gpu` (CUDA with an NVIDIA card).
 
 Technical details (methods, manifest, file names) are in [ASSETS.md](ASSETS.md).
 
@@ -233,6 +285,10 @@ git submodule update --init
 You can see the instructions to build and run the project in [BUILDING.md](BUILDING.md).
 
 ## Changes
+
+### Version 2.0.5
+* One-click HD on Linux and macOS: `HD_generate.sh` next to `AT` (on the Mac also `HD_generate.command` for a
+  double-click), the same steps and log as `HD_generate.bat` on Windows. Tested in CI on Ubuntu and macOS 15.
 
 ### Version 2.0.4
 * One-click HD on Windows: `HD_generate.bat` (next to `AT.exe`) checks the game folder, installs Python with `winget`

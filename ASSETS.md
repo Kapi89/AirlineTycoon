@@ -262,6 +262,17 @@ Python des Runners versteckt wurde (PATH, py-Launcher, Registry), mit kuenstlich
 schriften,stadtfotos -Behalten`, dann alles (muss Umgebung und Modelle wiederverwenden, die Animation exportieren und
 am Ende aufraeumen).
 
+### Linux und macOS: HD_generate.sh (H30)
+
+`tools/HD_generate.sh` (bash, auch bash 3.2 auf dem Mac) bildet `HD_generate.ps1` Schritt fuer Schritt nach: gleiche
+Marken (`hd_tools/venv/hd_pakete.txt`, `export_fertig.txt`, `export_laeuft.txt`), gleiche Modelle und Pruefsummen,
+gleiches Log. Unterschiede: Python 3.10-3.14 (fuer 3.14 gibt es torch unter Linux und macOS), Installation per
+Paketverwaltung bzw. Homebrew nach Rueckfrage; torch unter Linux von `download.pytorch.org` (CUDA passend zum Treiber
+bzw. `cpu`, als Rueckfall PyPI), auf dem Mac von PyPI (MPS auf Apple-Chips); Versionspruefung ueber den Text
+`VERSION x.y.z` im Programm; auf dem Mac Angebot, die Quarantaene-Markierung von `AT` zu entfernen. Der Build kopiert
+das Skript neben `AT` (macOS zusaetzlich `HD_generate.command`). Der CI-Job `hd-test-unix` spielt es auf Ubuntu und
+macOS 15 mit den kuenstlichen Testdaten durch (wie `hd-test`).
+
 ### Animierte Personen in Raeumen: Export und Zaehlung (H25a)
 
 Verkaeufer, Berater, Boss usw. in den Raeumen sind Smacker-Videos (`video/*.smk`, `CSmackerPerson`), keine

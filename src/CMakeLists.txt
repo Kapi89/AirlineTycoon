@@ -257,6 +257,20 @@ if (WIN32)
         TARGET AT POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HD_TOOLS_DIR}/HD_generate.bat" "$<TARGET_FILE_DIR:AT>"
     )
+else()
+    # H30: Linux und macOS: HD_generate.sh neben AT, auf dem Mac dazu HD_generate.command (Doppelklick im Finder)
+    add_custom_command(
+        TARGET AT POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HD_TOOLS_DIR}/HD_generate.sh" "$<TARGET_FILE_DIR:AT>"
+        COMMAND chmod +x "$<TARGET_FILE_DIR:AT>/HD_generate.sh"
+    )
+    if (APPLE)
+        add_custom_command(
+            TARGET AT POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HD_TOOLS_DIR}/HD_generate.command" "$<TARGET_FILE_DIR:AT>"
+            COMMAND chmod +x "$<TARGET_FILE_DIR:AT>/HD_generate.command"
+        )
+    endif()
 endif()
 
 install(TARGETS AT DESTINATION "${PROJECT_INSTALL_DIR}")
