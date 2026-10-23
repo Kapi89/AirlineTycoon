@@ -127,6 +127,13 @@ void SB_RecordHdHighlight(SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 f
     }
 }
 
+void SB_RecordHdBlend(SB_CBitmapCore *target, SB_CBitmapCore *src, SLONG step, SB_CBitmapCore *src2, SLONG step2, SLONG steps, const SDL_Rect &area,
+                      SB_HdEffectReplay replay, const void *ctx) {
+    if (gHdPrimary != nullptr && target != nullptr && src != nullptr && src2 != nullptr && SB_GetRenderScale() > 1) {
+        gHdPrimary->RecordHdBlend(target, src, step, src2, step2, steps, area, replay, ctx);
+    }
+}
+
 // Pruefsumme der 1x-Pixel (erkennt, ob eine Bitmap mit HD-Textur nachtraeglich bemalt wurde)
 static Uint64 HdHashSurface(SDL_Surface *surface) {
     if (surface == nullptr || SDL_LockSurface(surface) < 0) {
@@ -1761,6 +1768,7 @@ SDL_Texture *SB_CPrimaryBitmap::GetGlowTexture(SDL_Surface *copy, Uint16 fontCol
             ForgetHdTexture(g.second);
         }
         HdGlowCache.clear();
+        HdGlowBorn.clear();
     }
     std::vector<float> k(size_t(gw) * size_t(h), 0.0F);
     SDL_LockSurface(copy);
@@ -1805,6 +1813,7 @@ SDL_Texture *SB_CPrimaryBitmap::GetGlowTexture(SDL_Surface *copy, Uint16 fontCol
     if (tex != nullptr) {
         HdAlphaTex.insert(tex);
         HdGlowCache[key] = tex;
+        HdGlowBorn[tex] = HdFrameNo + 1; // wird im naechsten BuildHdOverlay gezeigt
     }
     return tex;
 }
@@ -1998,6 +2007,66 @@ void SB_CPrimaryBitmap::RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *s
     }
     list->push_back(e);
     HdLimit(*list, target == this ? 16384 : 4096);
+}
+
+// Ueberblendung zweier Bilder (H31, Tageswechsel Tag/Nacht, Intro, Pause): zwei Eintraege. Der erste zeichnet src mit
+// seinem Anteil deckend (auf der GPU per Farbmodulation), der zweite addiert src2 mit seinem Anteil. Die Referenz
+// rechnet beides mit den Mischtabellen wie im Frame nach. Nur wenn eine Quelle eine eigene HD-Textur hat, sonst
+// bleibt es bei 1x (Bildschirmkopien beim Raumwechsel).
+void SB_CPrimaryBitmap::RecordHdBlend(SB_CBitmapCore *target, SB_CBitmapCore *src, SLONG step, SB_CBitmapCore *src2, SLONG step2, SLONG steps,
+                                      const SDL_Rect &area, SB_HdEffectReplay replay, const void *ctx) {
+    if (target != this || replay == nullptr || steps <= 0 || area.w <= 0 || area.h <= 0 || !CanUseHd()) {
+        return;
+    }
+    HdWritten(target, &area, true); // deckend: was vorher darunter lag, ist verdeckt
+    SB_CBitmapCore *srcs[2] = {src, src2};
+    bool hd = false;
+    for (SB_CBitmapCore *s : srcs) {
+        SDL_Surface *surface = s->lpDDSurface;
+        if (surface == nullptr || surface->format->BytesPerPixel != 2) {
+            return;
+        }
+        if (s->HdTexture != nullptr && !HdStillValid(surface, s->HdHash, s->HdCheck)) {
+            s->HdTexture = nullptr;
+            HdMissingSurface(s->HdName, surface, " (HD-PNG vorhanden, aber die Grafik wird im Spiel bemalt; Ueberblendung)");
+            s->HdName.clear();
+        }
+        hd = hd || s->HdTexture != nullptr;
+    }
+    std::vector<SB_HdEntry> *list = HdListOf(target, false);
+    if (!hd || list == nullptr) {
+        return;
+    }
+    const SLONG stepOf[2] = {step, step2};
+    SB_HdEntry parts[2];
+    for (SLONG i = 0; i < 2; i++) {
+        SB_HdEntry &e = parts[i];
+        SDL_Surface *surface = srcs[i]->lpDDSurface;
+        e.Src = surface;
+        e.Core = srcs[i]->HdTexture != nullptr ? srcs[i] : nullptr;
+        e.SrcRect = area;
+        e.Dst = area;
+        e.Clip = area;
+        e.Kind = 5;
+        e.Alpha = Uint8(std::min(SLONG(255), std::max(SLONG(0), stepOf[i] * 255 / steps)));
+        e.Param = (stepOf[i] & 0xFF) | (i == 1 ? 0x100 : 0);
+        e.Replay = replay;
+        e.Ctx = ctx;
+        if (srcs[i]->HdTexture != nullptr) {
+            e.Tex = srcs[i]->HdTexture;
+            e.TexScale = SB_GetRenderScale();
+            e.TexAlpha = HdAlphaTex.count(e.Tex) != 0;
+        } else {
+            e.Tex = Get1xTexture(surface);
+            e.TexAlpha = true; // Pixel 0 ist in der 1x-Textur durchsichtig, im Bild schwarz
+        }
+        if (e.Tex == nullptr) {
+            return;
+        }
+    }
+    list->push_back(parts[0]);
+    list->push_back(parts[1]);
+    HdLimit(*list, 16384);
 }
 
 void SB_CPrimaryBitmap::HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque) {
@@ -2205,6 +2274,7 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
         AT_Log("HD-Debug F11 #%d: Frame %llu, %.1f %% durchsichtig (Mittel %.1f %%), %.1f %% 1x, %zu Eintraege, Liste %s, Bild %dx%d", HdDumpIndex,
                static_cast<unsigned long long>(HdFrameNo), HdLastPct, HdAvgPct, 100.0 - HdLastPct, HdDrawList.size(), HdListSource, Size.x, Size.y);
         HdDumpPresent = HdDumpIndex; // naechstes Present legt HD-Ebene und Bildschirm ab
+        LogHdHighlights();
     }
 
     HdStatTransparent += transparent;
@@ -2215,6 +2285,51 @@ void SB_CPrimaryBitmap::BuildHdOverlay() {
     }
     HdStatTicks += SDL_GetPerformanceCounter() - start;
     HdStatFrames++;
+}
+
+// F11 (H31): Text-Hervorhebungen (Kind 4) des Frames. Keine Zeile heisst: auch das 1x-Bild ist nicht hervorgehoben
+// (Spiellogik). Sonst: Anteil durchsichtiges Overlay im Bereich (dort zeigt die HD-Ebene), Leuchtrand neu oder aus dem
+// Cache, Zahl der HD-Zeichen darueber und der spaeter gezeichneten Eintraege, die den Bereich ueberdecken koennen.
+void SB_CPrimaryBitmap::LogHdHighlights() {
+    const SLONG w = lpDDSurface->w;
+    const SLONG h = lpDDSurface->h;
+    SLONG n = 0;
+    for (size_t i = 0; i < HdDrawList.size(); i++) {
+        const SB_HdEntry &e = HdDrawList[i];
+        if (e.Kind != 4) {
+            continue;
+        }
+        n++;
+        const SDL_Rect v = HdVisible(e);
+        SLONG clear = 0, all = 0;
+        for (SLONG y = std::max(0, v.y); y < std::min(h, v.y + v.h); y++) {
+            for (SLONG x = std::max(0, v.x); x < std::min(w, v.x + v.w); x++) {
+                all++;
+                clear += (HdMaskBuf[size_t(y) * size_t(w) + size_t(x)] >> 24) == 0 ? 1 : 0;
+            }
+        }
+        SLONG above = 0;
+        std::string kinds;
+        for (size_t j = i + 1; j < HdDrawList.size(); j++) {
+            const SDL_Rect o = HdVisible(HdDrawList[j]);
+            SDL_Rect cut;
+            if (SDL_IntersectRect(&o, &v, &cut) == SDL_TRUE) {
+                above++;
+                if (kinds.size() < 60) {
+                    kinds += std::to_string(HdDrawList[j].Kind) + (HdDrawList[j].Glyph ? "g" : (HdDrawList[j].ColorKey ? "k" : "d")) + " ";
+                }
+            }
+        }
+        auto born = HdGlowBorn.find(e.Tex);
+        AT_Log("HD-Debug F11 #%d: Hervorhebung %d,%d %dx%d, Overlay %.1f %% durchsichtig, Leuchtrand %s, %zu HD-Zeichen, danach %d Eintraege "
+               "darueber (Art: %s)",
+               HdDumpIndex, v.x, v.y, v.w, v.h, all > 0 ? 100.0 * double(clear) / double(all) : 0.0,
+               born == HdGlowBorn.end() ? "unbekannt" : (born->second == HdFrameNo ? "neu" : "aus dem Cache"), e.Sub ? e.Sub->size() : size_t(0),
+               above, kinds.empty() ? "-" : kinds.c_str());
+    }
+    if (n == 0) {
+        AT_Log("HD-Debug F11 #%d: keine Text-Hervorhebung in diesem Frame (auch nicht im 1x-Bild)", HdDumpIndex);
+    }
 }
 
 // Einbruch-Erkennung (nur mit Debug-Ordner): Faellt der Anteil durchsichtiger Pixel eines Frames
@@ -2480,6 +2595,22 @@ void SB_CPrimaryBitmap::DrawHdEntry(const SB_HdEntry &b, XY offset, const SDL_Re
             SDL_SetTextureAlphaMod(b.Tex3, 255);
             SDL_RenderCopyF(lpDD, b.Tex3, &src, &dst);
         }
+        return;
+    }
+    if (b.Kind == 5) {
+        // Ueberblendung (H31): erster Anteil deckend, zweiter addiert; der Anteil steckt in der Farbmodulation
+        const bool add = (b.Param & 0x100) != 0;
+        if (!add && b.TexAlpha) {
+            // durchsichtige Stellen der Textur sind im 1x-Bild schwarz
+            SDL_SetRenderDrawBlendMode(lpDD, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(lpDD, 0, 0, 0, 255);
+            SDL_RenderFillRectF(lpDD, &dst);
+        }
+        SDL_SetTextureBlendMode(b.Tex, add ? SDL_BLENDMODE_ADD : (b.TexAlpha ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE));
+        SDL_SetTextureAlphaMod(b.Tex, 255);
+        SDL_SetTextureColorMod(b.Tex, b.Alpha, b.Alpha, b.Alpha);
+        SDL_RenderCopyF(lpDD, b.Tex, &src, &dst);
+        SDL_SetTextureColorMod(b.Tex, 255, 255, 255); // die Textur wird auch fuer normale Blits benutzt
         return;
     }
     if (b.Kind == 4) {

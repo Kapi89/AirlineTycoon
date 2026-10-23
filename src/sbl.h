@@ -148,7 +148,8 @@ struct SB_HdEntry {
     bool ColorKey{false};              // Blit mit Colorkey (sonst deckend)
     bool TexAlpha{false};              // Textur hat durchsichtige Stellen
     Uint8 Alpha{255};                  // Deckkraft auf der GPU (BlitTrans)
-    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans), 4 Text-Hervorhebung
+    SLONG Kind{0};                     // 0 Blit, 1 Schatten, 2 Transparenz, 3 Sprechblase (BlitWhiteTrans), 4 Text-Hervorhebung,
+                                       // 5 Ueberblendung zweier Bilder (ApplyOn2, H31): Alpha = Anteil, Param Bit 8 = addieren
     bool Glyph{false};                 // Zeichen aus einem HD-Glyphenblatt (H7)
     bool KeyZero{false};               // Pixel 0 der 1x-Quelle durchsichtig, obwohl die Quelle keinen Colorkey hat (H14)
     bool FlipX{false};                 // gespiegelter Blit (H19): Src ist die gespiegelte 1x-Kopie, Tex wird gespiegelt gezeichnet
@@ -334,6 +335,11 @@ void SB_RecordHdEffect(class SB_CBitmapCore *target, class SB_CBitmapCore *src, 
 void SB_RecordHdHighlight(class SB_CBitmapCore *target, const SDL_Rect &rect, Uint16 fontColor, Uint32 rgb, SLONG param, SB_HdEffectReplay replay,
                           const void *ctx);
 
+// Ueberblendung zweier Bilder (ColorFX::ApplyOn2, H31): Ziel = src*step/steps + src2*step2/steps im Bereich area
+// (in Quelle und Ziel gleich). replay rechnet einen Anteil auf der Referenz nach (param: Schritt, Bit 8 = addieren).
+void SB_RecordHdBlend(class SB_CBitmapCore *target, class SB_CBitmapCore *src, SLONG step, class SB_CBitmapCore *src2, SLONG step2, SLONG steps,
+                      const SDL_Rect &area, SB_HdEffectReplay replay, const void *ctx);
+
 class SB_CPrimaryBitmap : public SB_CBitmapCore {
   public:
     SB_CPrimaryBitmap() = default;
@@ -400,6 +406,8 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_Texture *GetGlowTexture(SDL_Surface *copy, Uint16 fontColor, Uint32 rgb);
     void RecordHdEffect(SB_CBitmapCore *target, SB_CBitmapCore *src, const SDL_Rect &srcRect, XY pos, const SDL_Rect &clip, SLONG kind, Uint8 alpha,
                         SLONG param, SB_HdEffectReplay replay, const void *ctx);
+    void RecordHdBlend(SB_CBitmapCore *target, SB_CBitmapCore *src, SLONG step, SB_CBitmapCore *src2, SLONG step2, SLONG steps, const SDL_Rect &area,
+                       SB_HdEffectReplay replay, const void *ctx);
     void HdWritten(SB_CBitmapCore *target, const SDL_Rect *rect, bool opaque);
     void DropHdBlitsFrom(SB_CBitmapCore *core);
     bool CanUseHd() const { return lpDD != nullptr && lpTexture != nullptr; }
@@ -469,6 +477,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     SDL_Surface *HdFullRef{};                                          // Referenz fuer den ganzen Frame
     std::vector<SDL_Texture *> HdGraveyard;                            // freigegebene Texturen, die HdDrawList evtl. noch zeichnet
     std::unordered_map<Uint64, SDL_Texture *> HdGlowCache;              // Leuchtrand je Textinhalt/Farbe (H12)
+    std::unordered_map<const SDL_Texture *, Uint64> HdGlowBorn;         // Frame, in dem ein Leuchtrand angelegt wurde (F11-Diagnose, H31)
     SDL_Texture *HdScratch{};                                          // Zwischenziel fuer Sprechblasen (Kind 3)
     SDL_BlendMode HdBlendMulAlpha{SDL_BLENDMODE_INVALID}, HdBlendPremul{SDL_BLENDMODE_INVALID};
     bool HdCompositeOk{true};
@@ -483,6 +492,7 @@ class SB_CPrimaryBitmap : public SB_CBitmapCore {
     bool HdDumpRequested{false};
     std::string HdDumpDir;
     SLONG HdDumpIndex{0}, HdDumpPresent{0};
+    void LogHdHighlights(); // F11 (H31): Text-Hervorhebungen des Frames mit Overlay-Anteil und Eintraegen darueber
     const char *HdListSource{""};                                      // woher die Liste des gezeigten Frames stammt (Log)
     Uint64 HdStatAllPresents{0}, HdStatPresentsNoHd{0}, HdStatPresentsLow{0}, HdStatFramesLow{0}, HdStatMerged{0}, HdStatCarried{0}, HdStatFail{0};
     Uint64 HdStatBlits{0}, HdStatShades{0}, HdStatTrans{0}, HdStatBubbles{0}, HdStatFrameTotal{0};
