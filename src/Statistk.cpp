@@ -951,7 +951,7 @@ void CStatistik::RepaintTextWindow() {
                         break;
 
                     case TYP_VALUE:
-                        output = bprintf("%I64i", val);
+                        output = bprintf("%lli", val);
 
                         if (item.visible) {
                             summe += val;
@@ -1028,7 +1028,7 @@ void CStatistik::RepaintTextWindow() {
                     }
                     default:
                         hprintf("Statistik.cpp: Default case should not be reached.");
-                        DebugBreak();
+                        AtDebugBreak();
                     }
 
                     TextTableBm.PrintAt(output, StatFonts[p], TEC_FONT_RIGHT, rc.left, rc.top, rc.right - 5, rc.bottom);

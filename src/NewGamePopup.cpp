@@ -29,6 +29,10 @@ SLONG NewgameWantsToLoad = FALSE;
 SLONG NewgameToOptions = FALSE;
 SLONG gNetworkSavegameLoading = -1; // Komm-Variable, über die der Options-Screen mitteilt, welcher Spielstand für's Netzwerk geladen werden soll
 
+// Bot levels can be chosen unless a network savegame is being loaded: the savegame brings its
+// own levels, which the lobby does not know (they are not in the savegame's header).
+static bool BotLevelsEditable() { return gNetworkSavegameLoading == -1; }
+
 extern SLONG gLoadGameNumber;
 extern BOOL gSpawnOnly;
 
@@ -605,7 +609,7 @@ void NewGamePopup::RefreshKlackerField() {
                 /* Only where the level is chosen. A network client learns the level from the host
                    (ATNET_BOTSELECT) and does not know the mission yet: clamping by its own, left over
                    Sim.Difficulty made it run a different bot than the host. */
-                if (PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster) {
+                if ((PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster) && BotLevelsEditable()) {
                     const SLONG MaxLevel = MaxBotLevel();
                     if (qPlayer.BotLevel > MaxLevel) {
                         qPlayer.BotLevel = MaxLevel;
@@ -614,7 +618,11 @@ void NewGamePopup::RefreshKlackerField() {
                         }
                     }
                 }
-                KlackerTafel.PrintAt(6, c * 2 + 3, StandardTexte.GetS(TOKEN_NEWGAME, 5001 + qPlayer.BotLevel)); // Difficulty level of bot
+                if (BotLevelsEditable()) {
+                    KlackerTafel.PrintAt(6, c * 2 + 3, StandardTexte.GetS(TOKEN_NEWGAME, 5001 + qPlayer.BotLevel)); // Difficulty level of bot
+                } else {
+                    KlackerTafel.PrintAt(6, c * 2 + 3, "?"); // Level comes from the savegame
+                }
             } else {
                 KlackerTafel.PrintAt(6, c * 2 + 3, StandardTexte.GetS(TOKEN_NEWGAME, 5000));
             }
@@ -622,6 +630,11 @@ void NewGamePopup::RefreshKlackerField() {
     } else if (PageNum == PAGE_TYPE::MULTIPLAYER_SELECT_NETWORK) // Netzwerk: Provider-Medium wählen
     {
         pNetworkConnections = gNetwork.GetConnectionList();
+
+        /* The saved choice is an index into the list, and the list has lost entries since. */
+        if (Selection < 0 || Selection >= static_cast<SLONG>(pNetworkConnections->GetNumberOfElements())) {
+            Selection = 0;
+        }
 
         KlackerTafel.PrintAt(0, 0, StandardTexte.GetS(TOKEN_NEWGAME, 700));
         KlackerTafel.PrintAt(0, 15, StandardTexte.GetS(TOKEN_NEWGAME, 4001));                                                    // Zurück
@@ -781,6 +794,35 @@ void NewGamePopup::RefreshKlackerField() {
 SLONG NewGamePopup::MaxBotLevel() const {
     const SLONG Difficulty = (PageNum == PAGE_TYPE::SELECT_BOT_NETWORK) ? MissionValues[SessionMissionID] : SLONG(Sim.Difficulty);
     return (Difficulty == DIFF_FREEGAME) ? BotDifficultyMaxFreegame : BotDifficultyMax;
+}
+
+//--------------------------------------------------------------------------------------------
+// Bot level shown at position 'index' of the menu. The menu order (BotDifficultyLevels) differs
+// from the level values, which the bots keep.
+//--------------------------------------------------------------------------------------------
+SLONG NewGamePopup::GetBotLevelByIndex(SLONG index) const {
+    const SLONG Count = SLONG(BotDifficultyLevels.size());
+    return BotDifficultyLevels[((index % Count) + Count) % Count];
+}
+
+//--------------------------------------------------------------------------------------------
+// Next (dir=1) or previous (dir=-1) bot level in menu order, skipping levels above MaxLevel
+//--------------------------------------------------------------------------------------------
+static SLONG StepBotLevel(SLONG level, SLONG dir, SLONG MaxLevel) {
+    const SLONG Count = SLONG(BotDifficultyLevels.size());
+    SLONG index = 0;
+    for (SLONG i = 0; i < Count; i++) {
+        if (BotDifficultyLevels[i] == level) {
+            index = i;
+        }
+    }
+    for (SLONG i = 0; i < Count; i++) {
+        index = (index + dir + Count) % Count;
+        if (BotDifficultyLevels[index] <= MaxLevel) {
+            return BotDifficultyLevels[index];
+        }
+    }
+    return BotDifficultyClassic;
 }
 
 //--------------------------------------------------------------------------------------------
@@ -1051,7 +1093,8 @@ void NewGamePopup::OnPaint() {
                     SetMouseLook(CURSOR_HOT, 0, -100, 0);
                 }
 
-                if (isPlayerOrBotSelect(PageNum) && ((PageNum != PAGE_TYPE::SELECT_BOT_NETWORK) || bThisIsSessionMaster)) {
+                if (isPlayerOrBotSelect(PageNum) && ((PageNum != PAGE_TYPE::SELECT_BOT_NETWORK) || bThisIsSessionMaster) &&
+                    (!isBotSelect(PageNum) || BotLevelsEditable())) {
                     for (SLONG c = 0; c < 4; c++) {
                         // Check for click at names:
                         if (gMousePosition.x >= 175 + 48 && gMousePosition.y >= c * 22 * 3 + 129 && gMousePosition.y <= c * 22 * 3 + 129 + 22) {
@@ -1721,16 +1764,13 @@ void NewGamePopup::OnLButtonDown(UINT nFlags, CPoint point) {
                 }
             }
 
-            if (isBotSelect(PageNum) && (PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster)) {
+            if (isBotSelect(PageNum) && (PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster) && BotLevelsEditable()) {
                 for (SLONG c = 0; c < 4; c++) {
                     // Check for Click at Persons
                     if (point.x >= 128 && point.x <= 128 + 16 * 24 && point.y >= c * 22 * 3 + 129 && point.y <= c * 22 * 3 + 129 + 44) {
                         auto &qPlayer = Sim.Players.Players[c];
                         if (qPlayer.Owner == 1) {
-                            qPlayer.BotLevel += 1;
-                            if (qPlayer.BotLevel > MaxBotLevel()) {
-                                qPlayer.BotLevel = 0;
-                            }
+                            qPlayer.BotLevel = StepBotLevel(qPlayer.BotLevel, 1, MaxBotLevel());
                             SIM::SendSimpleMessage(ATNET_BOTSELECT, 0, c, qPlayer.BotLevel);
                         }
 
@@ -1898,7 +1938,7 @@ void NewGamePopup::OnLButtonDown(UINT nFlags, CPoint point) {
                     TEAKFILE Message;
 
                     Message.Announce(30);
-                    Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << Sim.Options.OptionLastPlayer << CString(VersionString);
+                    Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << Sim.Options.OptionLastPlayer << CString(NetVersionString);
 
                     SIM::SendMemFile(Message);
 
@@ -2073,16 +2113,13 @@ void NewGamePopup::OnRButtonDown(UINT /*nFlags*/, CPoint point) {
             Sim.Difficulty = MissionValues[SessionMissionID];
             RefreshKlackerField();
         }
-    } else if (isBotSelect(PageNum) && (PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster)) {
+    } else if (isBotSelect(PageNum) && (PageNum != PAGE_TYPE::SELECT_BOT_NETWORK || bThisIsSessionMaster) && BotLevelsEditable()) {
         for (SLONG c = 0; c < 4; c++) {
             // Check for Click at Persons
             if (point.x >= 128 && point.x <= 128 + 16 * 24 && point.y >= c * 22 * 3 + 129 && point.y <= c * 22 * 3 + 129 + 44) {
                 auto &qPlayer = Sim.Players.Players[c];
                 if (qPlayer.Owner == 1) {
-                    qPlayer.BotLevel -= 1;
-                    if (qPlayer.BotLevel < 0) {
-                        qPlayer.BotLevel = MaxBotLevel();
-                    }
+                    qPlayer.BotLevel = StepBotLevel(qPlayer.BotLevel, -1, MaxBotLevel());
                     SIM::SendSimpleMessage(ATNET_BOTSELECT, 0, c, qPlayer.BotLevel);
                 }
 
@@ -2170,7 +2207,7 @@ void NewGamePopup::CheckNetEvents() {
                                    version of a client rejoining a saved game, so a client has to check its host itself.
                                    Older clients read the first two fields only and ignore the rest. */
                                 Message << ATNET_SAVGEGAMECHECK << gNetworkSavegameLoading << Sim.GetSavegameUniqueGameId(gNetworkSavegameLoading, true)
-                                        << CString(VersionString);
+                                        << CString(NetVersionString);
 
                                 gNetwork.Send(Message.MemBuffer, Message.MemBufferUsed, SenderID, false);
                             } else {
@@ -2188,7 +2225,7 @@ void NewGamePopup::CheckNetEvents() {
                                     Message >> Version;
                                 }
 
-                                if (Version.Compare(VersionString) != 0) {
+                                if (Version.Compare(NetVersionString) != 0) {
                                     TEAKFILE Message;
 
                                     Message.Announce(30);
@@ -2240,7 +2277,7 @@ void NewGamePopup::CheckNetEvents() {
                             Message >> HostVersion;
                         }
 
-                        if (HostVersion.Compare(VersionString) != 0) {
+                        if (HostVersion.Compare(NetVersionString) != 0) {
                             PageNum = PAGE_TYPE::MULTIPLAYER_SELECT_SESSION;
                             if (pNetworkConnections == nullptr) {
                                 pNetworkConnections = gNetwork.GetConnectionList();
@@ -2258,7 +2295,7 @@ void NewGamePopup::CheckNetEvents() {
                             TEAKFILE JoinMessage;
                             JoinMessage.Announce(128);
                             JoinMessage << ATNET_WANNAJOIN2 << gNetwork.GetLocalPlayerID() << Sim.GetSavegameLocalPlayer(SavegameIndex)
-                                        << CString(VersionString);
+                                        << CString(NetVersionString);
                             SIM::SendMemFile(JoinMessage);
 
                             Sim.bNetwork = bOld;
@@ -2673,7 +2710,7 @@ void NewGamePopup::AutoLobbyPump() {
         {
             TEAKFILE Message;
             Message.Announce(30);
-            Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << SLONG(gAutoLobbySlot) << CString(VersionString);
+            Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << SLONG(gAutoLobbySlot) << CString(NetVersionString);
             SIM::SendMemFile(Message);
         }
 
@@ -2862,7 +2899,7 @@ void NewGamePopup::PumpLobbyNetwork() {
                     TEAKFILE Message;
 
                     Message.Announce(30);
-                    Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << Sim.Options.OptionLastPlayer << CString(VersionString);
+                    Message << ATNET_WANNAJOIN << gNetwork.GetLocalPlayerID() << Sim.Options.OptionLastPlayer << CString(NetVersionString);
 
                     SIM::SendMemFile(Message);
 
@@ -2875,7 +2912,7 @@ void NewGamePopup::PumpLobbyNetwork() {
                 break;
             default:
                 hprintf("NewGamePopup.cpp: Default case should not be reached.");
-                DebugBreak();
+                AtDebugBreak();
             }
 
             // if (gNetwork.Connect (pNetworkConnections->Get(NetMediumMapper[Selection]+1), (char*)(LPCTSTR)gHostIP))

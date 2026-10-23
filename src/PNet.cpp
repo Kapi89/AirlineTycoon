@@ -56,7 +56,9 @@ void PLAYER::NetSynchronizeImage() {
         if (needToSyncPlayer(qPlayer, false)) {
             SLONG d = 0;
 
-            Message << c << qPlayer.Image << qPlayer.ImageGotWorse;
+            /* The images change with every flight of the player (passengers, route image), so the
+               state carries the flight it was taken after, see ATNET_SYNC_IMAGE. */
+            Message << c << qPlayer.NetFlightStamp() << qPlayer.Image << qPlayer.ImageGotWorse;
 
             for (d = 0; d < 4; d++) {
                 Message << qPlayer.Sympathie[d];
@@ -92,7 +94,11 @@ void PLAYER::NetSynchronizeMoney() {
         if (needToSyncPlayer(qPlayer, false)) {
             SLONG d = 0;
 
-            Message << c;
+            /* Which of the player's flights of the day this is after, as in ATNET_SYNC_IMAGE.
+               Every flight books revenue and costs, so money taken after a flight a peer has still
+               to book would be booked twice there, and money taken before a flight it has already
+               booked would lose that flight. */
+            Message << c << qPlayer.NetFlightStamp();
 
             Message << qPlayer.Money << qPlayer.Credit << qPlayer.Bonus << qPlayer.AnzAktien << qPlayer.MaxAktien << qPlayer.TrustedDividende
                     << qPlayer.Dividende;
@@ -125,7 +131,11 @@ void PLAYER::NetSynchronizeRoutes() {
         PLAYER &qPlayer = Sim.Players.Players[c];
 
         if (needToSyncPlayer(qPlayer, false)) {
-            Message << c;
+            /* Which of the player's flights of the day this is after (see NetFlightStamp()).
+               Every flight changes a route's image, the day it was last flown and its usage, and
+               a flight booked in the same minute as this message would otherwise be undone on a
+               peer that has booked it already, or counted twice on one that is behind. */
+            Message << c << qPlayer.NetFlightStamp();
 
             for (SLONG d = Routen.AnzEntries() - 1; d >= 0; d--) {
                 Message << qPlayer.RentRouten.RentRouten[d].Rang << qPlayer.RentRouten.RentRouten[d].LastFlown << qPlayer.RentRouten.RentRouten[d].Image
@@ -589,30 +599,32 @@ void PLAYER::NetUpdateKerosin() const {
     Message.Announce(128);
 
     Message << ATNET_SYNCKEROSIN;
-    Message << PlayerNum << Tank << TankOpen << TankInhalt << KerosinQuali << KerosinKind << TankPreis << NetTankStamp();
+    Message << PlayerNum << Tank << TankOpen << TankInhalt << KerosinQuali << KerosinKind << TankPreis << NetFlightStamp();
 
     SIM::SendMemFile(Message);
 }
 
 //--------------------------------------------------------------------------------------------
-// How many flights of this player were booked today; the same on every peer at the same point
+// How many flights of this player were booked today; the same on every peer at the same point.
+// Sent with every state that a flight changes (money, image, routes, tank), so that a peer only
+// takes a state that was taken after the same flights as its own.
 //--------------------------------------------------------------------------------------------
-SLONG PLAYER::NetTankStamp() const {
-    if (NetTankFlightsDate != Sim.Date) {
+SLONG PLAYER::NetFlightStamp() const {
+    if (NetFlightsDate != Sim.Date) {
         return Sim.Date * 100000;
     }
-    return Sim.Date * 100000 + NetTankFlights;
+    return Sim.Date * 100000 + NetFlightsToday;
 }
 
 //--------------------------------------------------------------------------------------------
-// A flight of this player was booked (and took kerosine from the tank, if it was open)
+// A flight of this player was booked (see NetFlightStamp())
 //--------------------------------------------------------------------------------------------
-void PLAYER::NetTankFlightBooked() {
-    if (NetTankFlightsDate != Sim.Date) {
-        NetTankFlightsDate = Sim.Date;
-        NetTankFlights = 0;
+void PLAYER::NetFlightBooked() {
+    if (NetFlightsDate != Sim.Date) {
+        NetFlightsDate = Sim.Date;
+        NetFlightsToday = 0;
     }
-    NetTankFlights++;
+    NetFlightsToday++;
 }
 
 //--------------------------------------------------------------------------------------------
@@ -621,7 +633,7 @@ void PLAYER::NetTankFlightBooked() {
 // before a flight we have already booked would bring back what it took.
 //--------------------------------------------------------------------------------------------
 void PLAYER::NetReceiveKerosin(const NetTankState &State) {
-    const SLONG Mine = NetTankStamp();
+    const SLONG Mine = NetFlightStamp();
 
     if (State.Stamp == Mine) {
         NetTankPending = State;
@@ -641,7 +653,7 @@ void PLAYER::NetApplyPendingKerosin() {
         return;
     }
 
-    const SLONG Mine = NetTankStamp();
+    const SLONG Mine = NetFlightStamp();
     if (NetTankPending.Stamp < Mine) {
         NetTraceEvent("SKIP what=kerosin player=%ld theirs=%ld mine=%ld", static_cast<long>(PlayerNum), static_cast<long>(NetTankPending.Stamp),
                       static_cast<long>(Mine));

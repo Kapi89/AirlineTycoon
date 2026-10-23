@@ -140,7 +140,7 @@ void PLAYER::Add5UhrigFlights() {
     for (SLONG c = 0; c < 5; c++) {
         CAuftrag a;
 
-        a.RefillForUhrig((c + 0) / 2, &Auftraege.Random);
+        a.RefillForUhrig(4, &Auftraege.Random);
 
         Auftraege += a;
     }
@@ -195,7 +195,9 @@ ULONG PLAYER::BuyPlane(CXPlane &plane, TEAKRAND *pRnd) {
     CPlane &p = Planes[Id];
 
     p.MaxPassagiere = plane.CalcPassagiere() * 6 / 8;
+    p.MaxPassagiereTarget = p.MaxPassagiere;
     p.MaxPassagiereFC = plane.CalcPassagiere() * 1 / 8;
+    p.MaxPassagiereTargetFC = p.MaxPassagiereFC;
     p.MaxBegleiter = plane.CalcBegleiter();
 
     p.ptHersteller = "";
@@ -412,7 +414,7 @@ void PLAYER::ChangeMoney(__int64 Money, SLONG Reason, const CString &Par1, const
     case 2090:
         /* nicht benutzt */
         /* D::Kerosin */
-        DebugBreak();
+        AtDebugBreak();
         break;
     case 2091:
         /* D::Kerosintanks, %sl x %s */
@@ -718,7 +720,9 @@ void PLAYER::LeaveAllRooms() {
     SLONG c = 0;
 
     for (c = 9; c >= 0; c--) {
-        if ((Locations[c] != 0U) && Locations[c] != ROOM_AIRPORT) {
+        /* Without the flags: right after a room was left, the airport entry reads
+           ROOM_AIRPORT | ROOM_ENTERING and would be left as well. */
+        if ((Locations[c] != 0U) && (Locations[c] & ~(ROOM_ENTERING | ROOM_LEAVING)) != ROOM_AIRPORT) {
             Locations[c] = UWORD(Locations[c] | ROOM_LEAVING);
         }
     }
@@ -1234,7 +1238,7 @@ SLONG PLAYER::GetMissionRating(bool bAnderer) {
 
     default:
         AT_Log("Player.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 
     return (0);
@@ -1510,7 +1514,7 @@ void PLAYER::NewDay() {
         break;
     default:
         AT_Log("Player.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 
     // LastFlown-Feld bei den Routen aktualisieren:
@@ -1746,7 +1750,7 @@ void PLAYER::NewDay() {
                     break;
                 default:
                     AT_Log("Player.cpp: Default case should not be reached.");
-                    DebugBreak();
+                    AtDebugBreak();
                 }
 
                 if (Planes[c].Zustand > Planes[c].TargetZustand) {
@@ -1915,8 +1919,9 @@ void PLAYER::RouteWegnehmen(SLONG Routenindex, SLONG NeuerBesitzer) {
         qPlayer.RentRouten.RentRouten[Routenindex].TageMitVerlust = 0;
 
         qPlayer.RentRouten.RentRouten[Routenindex].Ticketpreis =
-            CalculateFlightCost(Routen[Routenindex].VonCity, Routen[Routenindex].NachCity, 800, 800, -1) * 3 / 180 * 2 * 2 / 10 * 10;
-        qPlayer.RentRouten.RentRouten[Routenindex].TicketpreisFC = qPlayer.RentRouten.RentRouten[Routenindex].Ticketpreis * 2;
+            CalculateRoutePricePreset(Routen[Routenindex].VonCity, Routen[Routenindex].NachCity, ROUTE_PRICE_PRESET_DEFAULT);
+        qPlayer.RentRouten.RentRouten[Routenindex].TicketpreisFC =
+            CalculateRoutePricePresetFC(Routen[Routenindex].VonCity, Routen[Routenindex].NachCity, ROUTE_PRICE_PRESET_DEFAULT);
     }
 
     RentRouten.RentRouten[Routenindex].Rang = 0;
@@ -2143,8 +2148,8 @@ void PLAYER::RentRoute(SLONG City1, SLONG City2, SLONG Miete) {
 
                 RentRouten.RentRouten[c].TageMitVerlust = 0;
 
-                RentRouten.RentRouten[c].Ticketpreis = CalculateFlightCost(City1, City2, 800, 800, -1) * 3 / 180 * 2 * 2 / 10 * 10;
-                RentRouten.RentRouten[c].TicketpreisFC = RentRouten.RentRouten[c].Ticketpreis * 2;
+                RentRouten.RentRouten[c].Ticketpreis = CalculateRoutePricePreset(City1, City2, ROUTE_PRICE_PRESET_DEFAULT);
+                RentRouten.RentRouten[c].TicketpreisFC = CalculateRoutePricePresetFC(City1, City2, ROUTE_PRICE_PRESET_DEFAULT);
             }
         }
     }
@@ -3205,6 +3210,19 @@ class RobotFlightplanWatch {
     const bool bActive;
     std::map<SLONG, unsigned long long> Before;
 };
+
+//--------------------------------------------------------------------------------------------
+// The classic bot sizes a share purchase by today's share price. GameMechanic::buyStock() prices
+// it in chunks of 2000 shares at a rising price, so a large order costs more than that estimate
+// and was refused as a whole. Shrinks the order to what can be afforded instead; an order that
+// fits is left as it is.
+//--------------------------------------------------------------------------------------------
+SLONG AffordableStockAmount(PLAYER &qPlayer, SLONG Airline, SLONG Amount) {
+    while (Amount > 0 && !GameMechanic::buyStock(qPlayer, Airline, Amount, false).first) {
+        Amount = Amount * 9 / 10 / 100 * 100;
+    }
+    return Amount;
+}
 } // namespace
 
 void PLAYER::RobotPump() {
@@ -3354,6 +3372,7 @@ void PLAYER::RobotPump() {
                 mClaudeBot->decOnThePhone();
             }
         }
+        mClaudeBot->tickCallback();
     } else {
         if (mBot->getOnThePhone()) {
             PERSON &qPerson = Sim.Persons[static_cast<SLONG>(Sim.Persons.GetPlayerIndex(PlayerNum))];
@@ -3362,6 +3381,7 @@ void PLAYER::RobotPump() {
                 mBot->decOnThePhone();
             }
         }
+        mBot->tickCallback();
     }
 
     if ((Sim.bNetwork != 0) && (Sim.bIsHost == 0)) {
@@ -4139,6 +4159,13 @@ void PLAYER::RobotExecuteAction() {
         return;
     }
 
+    /* The action is carried out now, so its fast-forward countdown is used up. At walking pace
+       nothing counts SpeedCount down: an action executed on arrival or by WaitWorkTill left it
+       behind (1 for an action without a room, like ACTION_CALL_INTER_HANDY). When the players
+       then called it a day, PERSONS::DoOneStep() counted the stale value down and executed the
+       queue a second time - by then empty, so the bot executed ACTION_NONE. */
+    SpeedCount = 0;
+
     RobotPlanePropsWatch PlaneWatch(*this);
     RobotFlightplanWatch FlightplanWatch(*this);
 
@@ -4538,9 +4565,12 @@ void PLAYER::RobotExecuteAction() {
 
                                     SLONG ObjectId = -1;
                                     GameMechanic::takeInternationalFreightJob(*this, n, e, ObjectId);
+                                    if (ObjectId < 0) {
+                                        continue;
+                                    }
 
                                     SLONG bailout = 10;
-                                    while (Frachten[ObjectId].TonsOpen > 0 && (bailout-- > 0)) {
+                                    while ((Frachten[ObjectId].TonsOpen > 0) && (bailout-- > 0)) {
                                         if (!GameMechanic::planFreightJob(*this, c, ObjectId, Sim.Date + VonZeit / 24, VonZeit % 24)) {
                                             break;
                                         }
@@ -4603,9 +4633,12 @@ void PLAYER::RobotExecuteAction() {
 
                                         SLONG ObjectId = -1;
                                         GameMechanic::takeInternationalFreightJob(*this, n, e, ObjectId);
+                                        if (ObjectId < 0) {
+                                            continue;
+                                        }
 
                                         SLONG bailout = 10;
-                                        while (Frachten[ObjectId].TonsOpen > 0 && (bailout-- > 0)) {
+                                        while ((Frachten[ObjectId].TonsOpen > 0) && (bailout-- > 0)) {
                                             if (!GameMechanic::planFreightJob(*this, c, ObjectId, Sim.Date + VonZeit / 24, VonZeit % 24)) {
                                                 break;
                                             }
@@ -4704,7 +4737,7 @@ void PLAYER::RobotExecuteAction() {
                                 break;
                             default:
                                 AT_Log("Player.cpp: Default case should not be reached.");
-                                DebugBreak();
+                                AtDebugBreak();
                             }
 
                             bpass = 4;
@@ -4748,7 +4781,7 @@ void PLAYER::RobotExecuteAction() {
                     break;
                 default:
                     AT_Log("Player.cpp: Default case should not be reached.");
-                    DebugBreak();
+                    AtDebugBreak();
                 }
             }
         }
@@ -4900,7 +4933,7 @@ void PLAYER::RobotExecuteAction() {
                         break;
                     default:
                         AT_Log("Player.cpp: Default case should not be reached.");
-                        DebugBreak();
+                        AtDebugBreak();
                     }
 
                     if ((ArabMode != 0) || (ArabMode2 != 0) || (ArabMode3 != 0)) {
@@ -5025,6 +5058,7 @@ void PLAYER::RobotExecuteAction() {
                     Anz = min(Anz, SLONG((Money - 3000000) / Sim.Players.Players[dislike].Kurse[0] / 100 * 100));
                 }
 
+                Anz = AffordableStockAmount(*this, dislike, Anz);
                 if (Anz != 0) {
                     GameMechanic::buyStock(*this, dislike, Anz, true);
                 }
@@ -5045,6 +5079,7 @@ void PLAYER::RobotExecuteAction() {
                     Anz = min(Anz, SLONG((Money - 3000000) / Kurse[0] / 100 * 100));
                 }
 
+                Anz = AffordableStockAmount(*this, PlayerNum, Anz);
                 if (Anz != 0) {
                     GameMechanic::buyStock(*this, PlayerNum, Anz, true);
                 }
@@ -5534,9 +5569,12 @@ void PLAYER::RobotExecuteAction() {
 
                             SLONG ObjectId = -1;
                             GameMechanic::takeFreightJob(*this, e, ObjectId);
+                            if (ObjectId < 0) {
+                                continue;
+                            }
 
                             SLONG bailout = 10;
-                            while (Frachten[ObjectId].TonsOpen > 0 && (bailout-- > 0)) {
+                            while ((Frachten[ObjectId].TonsOpen > 0) && (bailout-- > 0)) {
                                 if (!GameMechanic::planFreightJob(*this, c, ObjectId, Sim.Date + VonZeit / 24, VonZeit % 24)) {
                                     break;
                                 }
@@ -5599,9 +5637,12 @@ void PLAYER::RobotExecuteAction() {
 
                                 SLONG ObjectId = -1;
                                 GameMechanic::takeFreightJob(*this, e, ObjectId);
+                                if (ObjectId < 0) {
+                                    continue;
+                                }
 
                                 SLONG bailout = 10;
-                                while (Frachten[ObjectId].TonsOpen > 0 && (bailout-- > 0)) {
+                                while ((Frachten[ObjectId].TonsOpen > 0) && (bailout-- > 0)) {
                                     if (!GameMechanic::planFreightJob(*this, c, ObjectId, Sim.Date + VonZeit / 24, VonZeit % 24)) {
                                         break;
                                     }
@@ -5891,7 +5932,7 @@ void PLAYER::RobotExecuteAction() {
         break;
 
     default:
-        DebugBreak();
+        AtDebugBreak();
     }
 
     // NetGenericSync (110, PlayerNum);
@@ -6286,6 +6327,9 @@ void PLAYER::BuyItem(UBYTE Item) {
         }
 
         ReformIcons();
+        if (Sim.bNetwork != 0) {
+            PLAYER::NetSynchronizeItems();
+        }
     }
 }
 
@@ -6306,6 +6350,31 @@ void PLAYER::DisplayAsTelefoning() const {
 
     qPerson.Phase = UBYTE(Dir + 4);
     qPerson.LookDir = 8;
+}
+
+//--------------------------------------------------------------------------------------------
+// The player touched the vending machine without the glove. Runs on the peer that owns the
+// player (Person.cpp) and, through ATNET_ELECTROSHOCK, on every other peer:
+//--------------------------------------------------------------------------------------------
+void PLAYER::ElectroShock() {
+    PERSON &qPerson = Sim.Persons[static_cast<SLONG>(Sim.Persons.GetPlayerIndex(PlayerNum))];
+
+    BUILD *pBuild = Airport.GetBuildNear(qPerson.ScreenPos, XY(180, 160), Bricks(static_cast<SLONG>(0x10000000) + BRICK_ELECTRO));
+    if (pBuild != nullptr) {
+        Airport.Triggers[static_cast<SLONG>(pBuild->Par)].Winkel = Sim.TickerTime;
+    }
+
+    Sim.DontDisplayPlayer = PlayerNum;
+    qPerson.LookDir = 2;
+    qPerson.Phase = 0;
+
+    DirectToRoom = 0;
+    IsDrunk = 0;
+
+    if ((Sim.Options.OptionEffekte != 0) && PlayerNum == Sim.localPlayer) {
+        gUniversalFx.ReInit("fused.raw");
+        gUniversalFx.Play(0, Sim.Options.OptionEffekte * 100 / 7 * AmbientManager.GlobalVolume / 100);
+    }
 }
 
 //--------------------------------------------------------------------------------------------
@@ -6434,6 +6503,8 @@ void PLAYER::MapWorkerOverflow(BOOL Advice) {
 
     if (Sim.bNetwork != 0) {
         NetUpdateWorkers();
+    } else {
+        UpdateStaffStatistics();
     }
 }
 
@@ -6651,6 +6722,8 @@ again: // Zweiter Pass, wenn Stewardessen aus Luxusstellen umgebucht werden, dam
 
     if (Sim.bNetwork != 0) {
         NetUpdateWorkers();
+    } else {
+        UpdateStaffStatistics();
     }
 }
 
@@ -6864,53 +6937,10 @@ void PLAYER::UpdateStatistics() {
     // STAT_UNFAELLE: in Sim::NewDay()
     // STAT_SABOTIERT: in Sim::NewDay()
 
-    // STAT_MITARBEITER:
     bool hostOrNoNetwork = (Sim.bIsHost != 0) || (Sim.bNetwork == 0);
-    if (Owner == 0 || (Owner == 1 && hostOrNoNetwork && !RobotUse(ROBOT_USE_FAKE_PERSONAL))) {
-        for (c = d = 0; c < Workers.Workers.AnzEntries(); c++) {
-            if (Workers.Workers[c].Employer == PlayerNum) {
-                d++;
-            }
-        }
-        Statistiken[STAT_MITARBEITER].SetAtPastDay(d);
-    } else if (Owner == 1 && hostOrNoNetwork) {
-        for (c = d = 0; c < Planes.AnzEntries(); c++) {
-            if (Planes.IsInAlbum(c) != 0) {
-                // d+=PlaneTypes[Planes[c].TypeId].AnzPiloten;
-                d += Planes[c].ptAnzPiloten;
-                // d+=PlaneTypes[Planes[c].TypeId].AnzBegleiter;
-                d += Planes[c].ptAnzBegleiter;
-            }
-        }
-        Statistiken[STAT_MITARBEITER].SetAtPastDay(d);
-    }
-    // Owner==2 über Network
 
-    // STAT_ZUFR_PERSONAL:
-    if (Owner == 0 || (Owner == 1 && hostOrNoNetwork && !RobotUse(ROBOT_USE_FAKE_PERSONAL))) {
-        SLONG Anz = 0;
-
-        for (c = d = 0; c < Workers.Workers.AnzEntries(); c++) {
-            if (Workers.Workers[c].Employer == PlayerNum) {
-                d += (Workers.Workers[c].Happyness + 100) / 2;
-                Anz++;
-            }
-        }
-
-        // if (Anz>0) Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay (0, d/Anz);
-        if (Anz > 0) {
-            Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay(d / 100);
-        } else {
-            Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay(0);
-        }
-    } else if (Owner == 1 && hostOrNoNetwork) {
-        c = SLONG(Statistiken[STAT_MITARBEITER].GetAtPastDay(0));
-
-        c = c * (min(500, Image) + 2500) / 3000;
-
-        Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay(c);
-    }
-    // Owner==2 über Network
+    // STAT_MITARBEITER, STAT_ZUFR_PERSONAL:
+    UpdateStaffStatistics();
 
     if (Owner == 0 && (Sim.bCheatedSession == 0)) {
         Sim.AddHighscore((LPCTSTR)NameX, Sim.UniqueGameId2, Statistiken[STAT_FIRMENWERT].GetAtPastDay(0));
@@ -7130,7 +7160,7 @@ void PLAYER::BroadcastPosition(bool bForce) {
             PLAYER &qPlayer = (*this);
             PERSON &qPerson = Sim.Persons[Sim.Persons.GetPlayerIndex(PlayerNum)];
 
-            // if (qPerson.Position.x==qPerson.Target.x && qPerson.Position.y==qPerson.Target.y+5000) DebugBreak();
+            // if (qPerson.Position.x==qPerson.Target.x && qPerson.Position.y==qPerson.Target.y+5000) AtDebugBreak();
 
             // Read the message data:
             Message << qPlayer.PrimaryTarget.x << qPlayer.PrimaryTarget.y;
@@ -7227,7 +7257,7 @@ void PLAYERS::CheckFlighplans() {
 
                         default:
                             AT_Log("Player.cpp: Default case should not be reached.");
-                            DebugBreak();
+                            AtDebugBreak();
                         }
                     }
                 }
@@ -7237,12 +7267,62 @@ void PLAYERS::CheckFlighplans() {
 }
 
 //--------------------------------------------------------------------------------------------
+// Bringt STAT_MITARBEITER und STAT_ZUFR_PERSONAL auf den neusten Stand:
+//--------------------------------------------------------------------------------------------
+void PLAYER::UpdateStaffStatistics() {
+    SLONG c = 0;
+    SLONG d = 0;
+
+    /* Every peer computes these for every player: all of them repeat each hire, firing,
+       salary change and happiness change, and know every fleet and image. They used to be
+       computed only by the owner and copied from ATNET_PERSONNEL, which left the other
+       peers with whatever the last message said. */
+    if (Owner == 1 && RobotUse(ROBOT_USE_FAKE_PERSONAL)) {
+        for (c = d = 0; c < Planes.AnzEntries(); c++) {
+            if (Planes.IsInAlbum(c) != 0) {
+                d += Planes[c].ptAnzPiloten;
+                d += Planes[c].ptAnzBegleiter;
+            }
+        }
+        Statistiken[STAT_MITARBEITER].SetAtPastDay(d);
+        Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay(d * (min(500, Image) + 2500) / 3000);
+        return;
+    }
+
+    SLONG Anz = 0;
+    for (c = d = 0; c < Workers.Workers.AnzEntries(); c++) {
+        if (Workers.Workers[c].Employer == PlayerNum) {
+            /* A raise adds to happiness without the limit of 100, which only comes back the
+               next night; the statistic must not go beyond 100%. */
+            d += (std::clamp(Workers.Workers[c].Happyness, SLONG(-100), SLONG(100)) + 100) / 2;
+            Anz++;
+        }
+    }
+    Statistiken[STAT_MITARBEITER].SetAtPastDay(Anz);
+
+    /* Stored as the number of fully satisfied workers; rounded, because truncating showed
+       e.g. three workers at 99% as 66%. */
+    Statistiken[STAT_ZUFR_PERSONAL].SetAtPastDay((d + 50) / 100);
+}
+
+//--------------------------------------------------------------------------------------------
 // Bringt die Statistiken auf den neusten Stand:
 //--------------------------------------------------------------------------------------------
 void PLAYERS::UpdateStatistics() {
     for (SLONG c = 0; c < AnzPlayers; c++) {
         if (Players[c].IsOut == 0) {
             Players[c].UpdateStatistics();
+        }
+    }
+}
+
+//--------------------------------------------------------------------------------------------
+// Bringt STAT_MITARBEITER und STAT_ZUFR_PERSONAL aller Spieler auf den neusten Stand:
+//--------------------------------------------------------------------------------------------
+void PLAYERS::UpdateStaffStatistics() {
+    for (SLONG c = 0; c < AnzPlayers; c++) {
+        if (Players[c].IsOut == 0) {
+            Players[c].UpdateStaffStatistics();
         }
     }
 }
@@ -8305,7 +8385,7 @@ bool PLAYER::RobotUse(SLONG FeatureId) const {
                        "-X--------";
         break;
     case ROBOT_USE_NOCHITCHAT:
-        /* SuperBot: Job agencies (travel, last minute, freight, international) always have at least low priority */
+        /* SuperBot: Ignores this flag */
         pFeatureDesc = "------"
                        "."
                        "----------"

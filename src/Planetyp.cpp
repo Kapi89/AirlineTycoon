@@ -203,7 +203,7 @@ void CPlaneTypes::BlitPlaneAt(SBPRIMARYBM &TargetBm, SLONG PlaneType, SLONG Size
     } break;
     default:
         hprintf("Planetyp.cpp: Default case should not be reached.");
-        DebugBreak();
+        AtDebugBreak();
     }
 }
 
@@ -378,16 +378,18 @@ void CPlane::DoOneStep(SLONG PlayerNum) {
 
         //-2=Startend
     case -2:
+        /* The animation is driven by frames, not by the game clock, so it ends at a different game
+           time on every peer (in fast-forward hours late, after the landing). It used to book the
+           flight and set Ort=-5 here, which made revenue, fines and the plane's state depend on the
+           frame rate. SIM::DoTimeStep now books at xx:55 and puts the plane into the air at the full
+           hour; until then the plane waits off screen. */
+        if (AirportPos.y < -30) {
+            break;
+        }
         SkipPlaneCalculation = 0;
         AirportPos.x += 7;
         if (AirportPos.x * 2 > (Airport.LeftEnd + Airport.RightEnd * 3) / 4 && (AirportPos.x & 1) == 0) {
             AirportPos.y--;
-        }
-        if (AirportPos.y < -30) {
-            if (Flugplan.NextFlight != -1) {
-                Flugplan.Flug[Flugplan.NextFlight].BookFlight(this, PlayerNum);
-            }
-            Ort = -5;
         }
         break;
 
@@ -952,7 +954,8 @@ void CPlane::FlugplaeneFortfuehren(SLONG PlayerNum) {
                 Flugplan.Flug[c].Landedate += 7;
                 Flugplan.Flug[c].PArrived = 0;
                 Flugplan.Flug[c].HoursBefore = 48;
-                Flugplan.Flug[c].Ticketpreis = Sim.Players.Players[PlayerNum].RentRouten.RentRouten[Routen(Flugplan.Flug[c].ObjectId)].Ticketpreis; // new
+                Flugplan.Flug[c].Ticketpreis = Sim.Players.Players[PlayerNum].RentRouten.RentRouten[Routen(Flugplan.Flug[c].ObjectId)].Ticketpreis;     // new
+                Flugplan.Flug[c].TicketpreisFC = Sim.Players.Players[PlayerNum].RentRouten.RentRouten[Routen(Flugplan.Flug[c].ObjectId)].TicketpreisFC; // newer
                 Flugplan.Flug[c].FlightBooked = FALSE;
 
                 // Zeiten ggf. anpassen (Feintuning)

@@ -165,7 +165,7 @@ void NetTraceFingerprint(const char *When) {
         const bool bDetail = (gNetTraceLevel >= 2);
         std::string PlanesText;
         std::string RoutesText;
-        char One[40];
+        char One[120];
 
         SLONG Routes = 0;
         for (SLONG d = 0; d < qPlayer.RentRouten.RentRouten.AnzEntries(); d++) {
@@ -175,17 +175,17 @@ void NetTraceFingerprint(const char *When) {
             FpRoute.Add(qRoute.RoutenAuslastung);
             FpRoute.Add(qRoute.Ticketpreis);
             FpRoute.Add(qRoute.TicketpreisFC);
+            FpRoute.Add(qRoute.Image);
+            FpRoute.Add(qRoute.LastFlown);
             if (qRoute.Rang > 0) {
                 Routes++;
             }
             if (bDetail && (qRoute.Rang > 0 || qRoute.Auslastung > 0 || qRoute.RoutenAuslastung > 0)) {
-                Fingerprint RouteHash;
-                RouteHash.Add(qRoute.Rang);
-                RouteHash.Add(qRoute.Auslastung);
-                RouteHash.Add(qRoute.RoutenAuslastung);
-                RouteHash.Add(qRoute.Ticketpreis);
-                RouteHash.Add(qRoute.TicketpreisFC);
-                snprintf(One, sizeof(One), "%ld:%08lx,", static_cast<long>(d), static_cast<unsigned long>(RouteHash.Get()));
+                /* The values themselves rather than a hash of them: which one differs says which
+                   code changed it. rank/usage/route usage/price/price FC/image/last flown */
+                snprintf(One, sizeof(One), "%ld:%ld/%ld/%ld/%ld/%ld/%ld/%ld,", static_cast<long>(d), static_cast<long>(qRoute.Rang), static_cast<long>(qRoute.Auslastung),
+                         static_cast<long>(qRoute.RoutenAuslastung), static_cast<long>(qRoute.Ticketpreis), static_cast<long>(qRoute.TicketpreisFC),
+                         static_cast<long>(qRoute.Image), static_cast<long>(qRoute.LastFlown));
                 RoutesText += One;
             }
         }
@@ -254,6 +254,18 @@ void NetTraceFingerprint(const char *When) {
                 PlanePlan.Add(qFlight.Startdate);
                 PlanePlan.Add(qFlight.Startzeit);
                 PlanePlan.Add(qFlight.Gate);
+                /* What the passengers of a flight follow from, and the passengers themselves: every
+                   peer works them out again each hour until shortly before the start. */
+                FpPlane.Add(qFlight.HoursBefore);
+                FpPlane.Add(qFlight.Passagiere);
+                FpPlane.Add(qFlight.PassagiereFC);
+                FpPlane.Add(qFlight.Ticketpreis);
+                FpPlane.Add(qFlight.TicketpreisFC);
+                PlanePlan.Add(qFlight.HoursBefore);
+                PlanePlan.Add(qFlight.Passagiere);
+                PlanePlan.Add(qFlight.PassagiereFC);
+                PlanePlan.Add(qFlight.Ticketpreis);
+                PlanePlan.Add(qFlight.TicketpreisFC);
             }
             if (bDetail) {
                 snprintf(One, sizeof(One), "%ld:%08lx/%08lx,", static_cast<long>(d), static_cast<unsigned long>(PlaneEquipment.Get()),
@@ -349,6 +361,13 @@ void NetTraceFingerprint(const char *When) {
             }
         }
 
+        /* What the briefing and the statistics screen show about the staff: every peer computes
+           it for every player, so it must agree like the staff it is computed from. */
+        const SLONG StaffStat = SLONG(qPlayer.Statistiken[STAT_MITARBEITER].GetAtPastDay(0));
+        const SLONG StaffHappy = SLONG(qPlayer.Statistiken[STAT_ZUFR_PERSONAL].GetAtPastDay(0));
+        FpStaff.Add(StaffStat);
+        FpStaff.Add(StaffHappy);
+
         for (const Fingerprint *Part : {&FpCity, &FpRoute, &FpStock, &FpPlane, &FpOrder, &FpMisc, &FpStaff}) {
             Fp.Add(Part->Get());
         }
@@ -363,19 +382,20 @@ void NetTraceFingerprint(const char *When) {
         }
 
         AT_Log("FP  %s day=%ld t=%ld p=%ld owner=%ld out=%ld money=%lld credit=%lld image=%ld planes=%ld branches=%ld routes=%ld orders=%ld gates=%ld "
-               "shares=%ld staff=%ld tank=%ld kerosine=%ld tankopen=%ld office=%ld security=%lx strike=%ld strikeend=%ld items=%s virus=%ld rented=%ld "
+               "shares=%ld staff=%ld staffstat=%ld staffhappy=%ld tank=%ld kerosine=%ld tankopen=%ld office=%ld security=%lx strike=%ld strikeend=%ld items=%s "
+               "virus=%ld rented=%ld "
                "hcity=%08lx hroute=%08lx hstock=%08lx hplane=%08lx horder=%08lx hmisc=%08lx hstaff=%08lx hash=%08lx",
                When, static_cast<long>(Sim.Date), static_cast<long>(Sim.Time), static_cast<long>(c), static_cast<long>(qPlayer.Owner),
                static_cast<long>(qPlayer.IsOut), static_cast<long long>(qPlayer.Money), static_cast<long long>(qPlayer.Credit),
                static_cast<long>(qPlayer.Image), static_cast<long>(qPlayer.Planes.AnzEntries()), static_cast<long>(Branches), static_cast<long>(Routes),
                static_cast<long>(qPlayer.Auftraege.AnzEntries()), static_cast<long>(qPlayer.Gates.Gates.AnzEntries()), static_cast<long>(qPlayer.AnzAktien),
-               static_cast<long>(Staff), static_cast<long>(qPlayer.Tank), static_cast<long>(qPlayer.TankInhalt),
-               static_cast<long>(qPlayer.TankOpen), static_cast<long>(qPlayer.OfficeState), static_cast<unsigned long>(qPlayer.SecurityFlags),
-               static_cast<long>(qPlayer.StrikeHours), static_cast<long>(qPlayer.StrikeEndCountdown), ItemsText, static_cast<long>(qPlayer.LaptopVirus),
-               static_cast<long>(qPlayer.Gates.NumRented), static_cast<unsigned long>(FpCity.Get()),
-               static_cast<unsigned long>(FpRoute.Get()),
-               static_cast<unsigned long>(FpStock.Get()), static_cast<unsigned long>(FpPlane.Get()), static_cast<unsigned long>(FpOrder.Get()),
-               static_cast<unsigned long>(FpMisc.Get()), static_cast<unsigned long>(FpStaff.Get()), static_cast<unsigned long>(Fp.Get()));
+               static_cast<long>(Staff), static_cast<long>(StaffStat), static_cast<long>(StaffHappy), static_cast<long>(qPlayer.Tank),
+               static_cast<long>(qPlayer.TankInhalt), static_cast<long>(qPlayer.TankOpen), static_cast<long>(qPlayer.OfficeState),
+               static_cast<unsigned long>(qPlayer.SecurityFlags), static_cast<long>(qPlayer.StrikeHours), static_cast<long>(qPlayer.StrikeEndCountdown),
+               ItemsText, static_cast<long>(qPlayer.LaptopVirus), static_cast<long>(qPlayer.Gates.NumRented), static_cast<unsigned long>(FpCity.Get()),
+               static_cast<unsigned long>(FpRoute.Get()), static_cast<unsigned long>(FpStock.Get()), static_cast<unsigned long>(FpPlane.Get()),
+               static_cast<unsigned long>(FpOrder.Get()), static_cast<unsigned long>(FpMisc.Get()), static_cast<unsigned long>(FpStaff.Get()),
+               static_cast<unsigned long>(Fp.Get()));
         if (bDetail) {
             AT_Log("FPDETAIL %s day=%ld p=%ld planes=%s routes=%s", When, static_cast<long>(Sim.Date), static_cast<long>(c), PlanesText.c_str(),
                    RoutesText.c_str());

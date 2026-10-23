@@ -925,7 +925,7 @@ void SB_CColorFX::BlitAlpha(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap
         return;
     }
     if (SrcBitmap->GetXSize() <= 0 || SrcBitmap->GetXSize() >= 640) {
-        DebugBreak();
+        AtDebugBreak();
     }
 
     // BlitAlpha clippt nur an der Puffergroesse (Hoehe hoechstens 440), nicht am Clip-Rechteck
@@ -1012,7 +1012,7 @@ void SB_CColorFX::BlitGlow(SB_CBitmapCore *SrcBitmap, SB_CBitmapCore *TgtBitmap,
     XY t = TargetPos;
 
     if (SrcBitmap->GetXSize() <= 0 || SrcBitmap->GetXSize() >= 640) {
-        DebugBreak();
+        AtDebugBreak();
     }
 
     CRect Rect;
